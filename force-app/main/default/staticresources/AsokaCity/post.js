@@ -83,7 +83,7 @@ export class Post {
     this.quad.frustumCulled = false;
     this.scene.add(this.quad);
     const mk = (fs, u, extra = {}) => new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: fs, uniforms: u, depthTest: false, depthWrite: false, ...extra });
-    this.pre = mk(PREFILTER, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uThreshold: { value: 1.1 } });
+    this.pre = mk(PREFILTER, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uThreshold: { value: 2.4 } });
     this.down = mk(DOWN, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } });
     this.up = mk(UP, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() }, uWeight: { value: 1 } }, { blending: THREE.AdditiveBlending, transparent: true });
     this.comp = mk(COMPOSITE, {

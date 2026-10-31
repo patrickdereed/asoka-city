@@ -268,6 +268,7 @@ async function setCharacter(lookId) {
 
 function showCreator(fromPause = false) {
   state = "creator";
+  $("hud").classList.add("hidden");
   const c = prefs.character || { name: window.AC_NAME || "Alex", identity: "nonbinary", pronouns: "they/them", look: PEOPLE[0].id };
   creatorLook = Math.max(0, PEOPLE.findIndex((p) => p.id === c.look));
   ui.innerHTML = `
@@ -299,7 +300,7 @@ function showCreator(fromPause = false) {
     prefs.character = { name: $("c-name").value.trim() || "Alex", identity, pronouns: $("c-pro").value, look: PEOPLE[creatorLook].id };
     savePrefs();
     if (me) me.holder.visible = mode === "foot";
-    if (fromPause) { resume(); return; }
+    if (fromPause) { $("hud").classList.remove("hidden"); resume(); return; }
     showTitle();
     $("t-start").click();
   };
