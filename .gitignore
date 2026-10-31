@@ -1,0 +1,9 @@
+node_modules/
+.sf/
+.sfdx/
+.vscode/
+*.log
+.DS_Store
+test/shots/
+models-src/
+test/tmp/

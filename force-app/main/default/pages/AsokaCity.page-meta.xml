@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ApexPage xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>66.0</apiVersion>
+    <availableInTouch>false</availableInTouch>
+    <confirmationTokenRequired>false</confirmationTokenRequired>
+    <description>Go-Live: Asoka City, an open-world driving game in an 8 x 8 km Asoka-themed city. Loads the AsokaCity static resource as ES modules. Reads no Salesforce data; settings are saved in the browser per user.</description>
+    <label>Asoka City</label>
+</ApexPage>
