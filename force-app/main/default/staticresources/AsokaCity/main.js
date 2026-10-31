@@ -171,6 +171,11 @@ function applyQuality() {
   else shadow.setSize(q.shadow || 256, 170);
   U.uShadow.value = shadow.rt.depthTexture;
   U._shadowEnabled = !!q.shadow;
+  // Allocate the depth texture now. A shadow sampler bound to a never-rendered depth texture makes
+  // WebGL reject every draw that uses it (everything but the sky), e.g. with the sun on the horizon.
+  renderer.setRenderTarget(shadow.rt);
+  renderer.clear(true, true, false);
+  renderer.setRenderTarget(null);
   resize();
 }
 
@@ -269,7 +274,7 @@ async function setCharacter(lookId) {
 function showCreator(fromPause = false) {
   state = "creator";
   $("hud").classList.add("hidden");
-  const c = prefs.character || { name: window.AC_NAME || "Alex", identity: "nonbinary", pronouns: "they/them", look: PEOPLE[0].id };
+  const c = prefs.character || { name: window.AC_NAME || "Alex", identity: "man", pronouns: "he/him", look: (PEOPLE.find((p) => p.g === "m") || PEOPLE[0]).id };
   creatorLook = Math.max(0, PEOPLE.findIndex((p) => p.id === c.look));
   ui.innerHTML = `
     <div class="creator">
