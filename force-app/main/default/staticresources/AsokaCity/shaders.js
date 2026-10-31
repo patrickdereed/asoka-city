@@ -77,6 +77,8 @@ void main() {
     c *= (1. - .2 * line) * (.9 + .1 * tile) * (.92 + .1 * n2);
     spec = .4;
   }
+  // Pale paving reads as glare under a strong sun; real stone and concrete reflect far less.
+  if (vPat > .5 && vPat < 3.5 || vPat > 4.5) c *= .62;
   float sh = shadowAt(vW, n);
   vec3 col = c * light(n, sh) + emi;
   vec3 V = normalize(vW - uCam);
@@ -472,12 +474,52 @@ void main() {
 }`;
 
 export const DEPTH_VS = /* glsl */ `
+#include <common>
+#include <skinning_pars_vertex>
 void main() {
-  vec4 lp = vec4(position, 1.);
+  #include <skinbase_vertex>
+  vec3 transformed = position;
+  #include <skinning_vertex>
+  vec4 lp = vec4(transformed, 1.);
   #ifdef USE_INSTANCING
     lp = instanceMatrix * lp;
   #endif
   gl_Position = projectionMatrix * viewMatrix * modelMatrix * lp;
+}`;
+
+// Skinned people (Rocketbox avatars) in the city's lighting.
+export const PERSON_VS = /* glsl */ `
+#include <common>
+#include <skinning_pars_vertex>
+varying vec3 vW; varying vec3 vN; varying vec2 vUv;
+void main() {
+  #include <skinbase_vertex>
+  vec3 objectNormal = normal;
+  #include <skinnormal_vertex>
+  vec3 transformed = position;
+  #include <skinning_vertex>
+  vec4 wp = modelMatrix * vec4(transformed, 1.);
+  vW = wp.xyz; vN = normalize(mat3(modelMatrix) * objectNormal); vUv = uv;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+
+export const PERSON_FS = /* glsl */ `
+${COMMON}
+uniform sampler2D uMap; uniform float uAlphaCut; uniform float uSkin;
+varying vec3 vW; varying vec3 vN; varying vec2 vUv;
+void main() {
+  vec4 t = texture2D(uMap, vUv);
+  if (t.a < uAlphaCut) discard;
+  vec3 n = normalize(vN);
+  if (!gl_FrontFacing) n = -n;
+  float sh = shadowAt(vW, n);
+  vec3 alb = lin(t.rgb);
+  vec3 col = alb * light(n, sh);
+  // A little wrap and rim light so faces don't go flat in shade.
+  vec3 V = normalize(uCam - vW);
+  col += alb * uSkyAmb * pow(1. - max(dot(n, V), 0.), 3.) * .35;
+  col += alb * uLightCol * max(dot(n, uLightDir) * .5 + .5, 0.) * .08 * uSkin * sh;
+  gl_FragColor = vec4(fog(col, vW), 1.);
 }`;
 
 export const DEPTH_FS = /* glsl */ `void main() { gl_FragColor = vec4(1.); }`;

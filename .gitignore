@@ -7,3 +7,5 @@ node_modules/
 test/shots/
 models-src/
 test/tmp/
+build/
+models-src/

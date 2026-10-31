@@ -39,6 +39,22 @@ export class Input {
     if (p) this.padPrev = p.buttons.map((b) => b.pressed);
   }
 
+  // On foot: W/S walk, A/D turn, Shift to jog; left stick on a gamepad, A to jog.
+  foot() {
+    const k = this.down;
+    let move = (k.has("KeyW") || k.has("ArrowUp") ? 1 : 0) - (k.has("KeyS") || k.has("ArrowDown") ? 0.6 : 0);
+    let turn = (k.has("KeyD") || k.has("ArrowRight") ? 1 : 0) - (k.has("KeyA") || k.has("ArrowLeft") ? 1 : 0);
+    let run = k.has("ShiftLeft") || k.has("ShiftRight");
+    const p = this.pad();
+    if (p) {
+      const ax = p.axes[0] || 0, ay = p.axes[1] || 0;
+      if (Math.abs(ax) > 0.15) turn = ax;
+      if (Math.abs(ay) > 0.15) move = -ay;
+      run = run || !!(p.buttons[0] && p.buttons[0].pressed);
+    }
+    return { move, turn, run };
+  }
+
   drive(dt) {
     const k = this.down;
     const left = k.has("KeyA") || k.has("ArrowLeft"), right = k.has("KeyD") || k.has("ArrowRight");

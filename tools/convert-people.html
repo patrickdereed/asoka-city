@@ -1,0 +1,73 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Asoka City people converter</title>
+<script type="importmap">{"imports":{"three":"/three/build/three.module.js","three/addons/":"/three/examples/jsm/"}}</script></head>
+<body style="background:#182b2e;color:#fff7ee;font:12px monospace"><pre id="log"></pre>
+<script type="module">
+// Converts Microsoft Rocketbox (MIT) FBX avatars into small GLBs for Asoka City's streets: the skinned
+// mesh split per material, a 1024px JPEG body map, 512px JPEG head map and a 512px PNG hair layer.
+// No normal or specular maps: people are seen at street distance. Results go to build/people/.
+import * as THREE from "three";
+import { FBXLoader } from "three/addons/loaders/FBXLoader.js";
+import { TGALoader } from "three/addons/loaders/TGALoader.js";
+import { GLTFExporter } from "three/addons/exporters/GLTFExporter.js";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+const log = (s) => { document.getElementById("log").textContent += s + "\n"; };
+const save = (p, data) => fetch("/save?path=" + encodeURIComponent(p), { method: "POST", body: data }).then((r) => r.text());
+function toCanvas(tex, size) {
+  const img = tex.image, cv = document.createElement("canvas"); cv.width = cv.height = size;
+  const ctx = cv.getContext("2d");
+  const src = document.createElement("canvas"); src.width = img.width; src.height = img.height;
+  const id = src.getContext("2d").createImageData(img.width, img.height);
+  id.data.set(img.data); src.getContext("2d").putImageData(id, 0, 0);
+  ctx.translate(0, size); ctx.scale(1, -1);
+  ctx.drawImage(src, 0, 0, size, size);
+  return cv;
+}
+function canvasTex(cv, mime) { const t = new THREE.CanvasTexture(cv); t.userData.mimeType = mime; t.flipY = false; t.colorSpace = THREE.SRGBColorSpace; return t; }
+function loadFBX(url, dir) {
+  const mgr = new THREE.LoadingManager();
+  mgr.addHandler(/\.tga$/i, new TGALoader(mgr));
+  mgr.setURLModifier((u) => (u.endsWith(".fbx") ? u : `${dir}/${u.split(/[\\/]/).pop()}`));
+  return new Promise((res, rej) => new FBXLoader(mgr).load(url, (o) => (mgr.onLoad = () => res(o)), undefined, rej));
+}
+window.convertAvatar = async (name) => {
+  const obj = await loadFBX(`/rb/${name}/${name}.fbx`, `/rb/${name}`);
+  await new Promise((r) => setTimeout(r, 300));
+  obj.animations = [];
+  obj.scale.setScalar(0.01);
+  let mesh;
+  obj.traverse((o) => { if (o.isSkinnedMesh) mesh = o; });
+  const has = (t) => !!(t?.image && (t.image.data || t.image.width));
+  const mats = mesh.material.map((m) => {
+    const kind = /glasses/i.test(m.name) ? "glasses" : /opacity/i.test(m.name) ? "hair" : /head/i.test(m.name) ? "head" : "body";
+    const out = new THREE.MeshStandardMaterial({ name: kind, roughness: 0.8, metalness: 0 });
+    const size = kind === "body" ? 1024 : 512;
+    if (has(m.map)) out.map = canvasTex(toCanvas(m.map, size), kind === "hair" || kind === "glasses" ? "image/png" : "image/jpeg");
+    if (kind === "hair") { out.alphaTest = 0.5; out.side = THREE.DoubleSide; }
+    if (kind === "glasses") { out.transparent = true; out.side = THREE.DoubleSide; }
+    return out;
+  });
+  const src = mesh.geometry, parent = mesh.parent, byMat = new Map();
+  for (const g of src.groups) { if (!byMat.has(g.materialIndex)) byMat.set(g.materialIndex, []); byMat.get(g.materialIndex).push(g); }
+  for (const [mi, groups] of byMat) {
+    const geo = new THREE.BufferGeometry();
+    for (const key of ["position", "normal", "uv", "skinIndex", "skinWeight"]) {
+      const a = src.attributes[key]; if (!a) continue;
+      let total = 0; for (const g of groups) total += g.count;
+      const arr = new a.array.constructor(total * a.itemSize); let o = 0;
+      for (const g of groups) { arr.set(a.array.subarray(g.start * a.itemSize, (g.start + g.count) * a.itemSize), o); o += g.count * a.itemSize; }
+      geo.setAttribute(key, new THREE.BufferAttribute(arr, a.itemSize, a.normalized));
+    }
+    const part = new THREE.SkinnedMesh(mergeVertices(geo, 1e-4), mats[mi]);
+    part.name = mats[mi].name;
+    part.bind(mesh.skeleton, mesh.bindMatrix);
+    parent.add(part);
+  }
+  parent.remove(mesh);
+  const glb = await new GLTFExporter().parseAsync(obj, { binary: true, onlyVisible: false, maxTextureSize: 1024 });
+  const r = await save(`people/${name}.glb`, glb);
+  log(`${name}: ${r} ${(glb.byteLength / 1024).toFixed(0)} KB`);
+  return Math.round(glb.byteLength / 1024);
+};
+window.__ready = true;
+log("converter ready");
+</script></body></html>

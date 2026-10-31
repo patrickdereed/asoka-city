@@ -75,3 +75,19 @@ kbd { font: 700 12px "Space Mono", monospace; padding: 2px 6px; margin-right: 4p
   .hud-speed b { font-size: 44px; }
   .hud-district b { font-size: 22px; }
 }
+
+/* Character creator */
+.creator { position: absolute; inset: 0; display: grid; align-items: center; padding: 4vh 5vw; background: linear-gradient(90deg, rgba(24, 43, 46, 0.92) 0%, rgba(24, 43, 46, 0.6) 34%, rgba(24, 43, 46, 0) 55%); }
+.field { display: grid; gap: 6px; font-size: 13px; color: var(--spruce-100); }
+.field input { font: 500 17px "Space Grotesk", system-ui, sans-serif; padding: 10px 12px; border-radius: 8px; background: var(--spruce-800); color: var(--cream-50); border: 1px solid var(--line); }
+.field input:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
+.seg { border: 0; padding: 0; margin: 0; display: grid; gap: 6px; }
+.seg legend { font-size: 13px; color: var(--spruce-100); margin-bottom: 6px; }
+.seg label { display: inline-block; margin-right: 6px; }
+.seg input { position: absolute; opacity: 0; }
+.seg span { display: inline-block; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 253, 249, 0.06); cursor: pointer; font-weight: 600; }
+.seg input:checked + span { background: var(--orange-bg); color: var(--spruce-900); border-color: var(--orange); }
+.seg input:focus-visible + span { outline: 2px solid var(--cream); outline-offset: 2px; }
+.look { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }
+.look span { text-align: center; font: 400 13px "Space Mono", monospace; color: var(--spruce-100); }
+.look .btn { padding: 8px 16px; font-size: 20px; }

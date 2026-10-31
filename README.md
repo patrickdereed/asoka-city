@@ -23,6 +23,15 @@ Walking, the Audit patrols, missions and the 25-hour main story come in later st
 About 358 km of road, 21,500 buildings and 19 bridges. The river runs north to south through the
 hills and the docks.
 
+## People
+
+Pavement crowds and the player's own character are Microsoft Rocketbox avatars (MIT): 20 casual adults
+converted with `tools/convert-people.html` and 11 business avatars shared with Deal Room, packed by
+`tools/pack-people.mjs` into `AsokaCityPeople*`. Standing poses are Rocketbox motion capture
+(`AsokaCityMoves`); walking and jogging are generated in `people.js` on the Bip01 rig. At the start you
+create your character: a name, man / woman / non-binary, the pronouns the story uses, and any of the
+31 looks. Press F to get out of the car and walk (Shift to jog), F again by the car to drive.
+
 ## Layout
 
 - `force-app/main/default/staticresources/AsokaCity/`: the game, as ES modules
@@ -52,4 +61,5 @@ sf org assign permset --name Asoka_City --target-org meridian10
 three.js r170 and its GLTFLoader (MIT, `three.LICENSE.txt`). Space Grotesk and Space Mono (SIL Open Font
 License, `fonts/*-OFL.txt`). The 12 car models are Creative Commons Attribution 4.0 models from Sketchfab
 (11 by Daniel Zhabotinsky, one by mk2design), converted by Rally Legends' build tool; each
-`AsokaCityCars*/CREDITS.txt` names the model, author and source. Everything else is original.
+`AsokaCityCars*/CREDITS.txt` names the model, author and source. People and their standing animations are
+Microsoft Rocketbox (MIT, `ROCKETBOX-LICENSE.md` in each pack). Everything else is original.
