@@ -68,6 +68,8 @@ export const ICONS = {
   clinic: { bg: "#fffdf9", fg: "#2f757c", label: "Meridian Clinic (healing)" },
   home: { bg: "#fff7ee", fg: "#3f7f45", label: "Home for sale" },
   owned: { bg: "#3f7f45", fg: "#fffdf9", label: "Your home (save)" },
+  landmark: { bg: "#182b2e", fg: "#ffc667", label: "Landmark, found" },
+  unfound: { bg: "#182b2e", fg: "#8fa6a8", label: "Landmark, not yet found" },
 };
 
 export function drawIcon(g, kind, x, y, r) {
@@ -86,6 +88,10 @@ export function drawIcon(g, kind, x, y, r) {
     g.beginPath(); g.arc(0, -k * 0.35, k * 0.42, Math.PI, 0); g.stroke();
   } else if (kind === "threads") {
     g.beginPath(); g.moveTo(-k, -k * 0.45); g.lineTo(-k * 0.45, -k * 0.8); g.lineTo(k * 0.45, -k * 0.8); g.lineTo(k, -k * 0.45); g.lineTo(k * 0.65, -k * 0.1); g.lineTo(k * 0.45, -k * 0.25); g.lineTo(k * 0.45, k * 0.85); g.lineTo(-k * 0.45, k * 0.85); g.lineTo(-k * 0.45, -k * 0.25); g.lineTo(-k * 0.65, -k * 0.1); g.closePath(); g.fill();
+  } else if (kind === "landmark" || kind === "unfound") {
+    g.beginPath();
+    for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + (i * Math.PI) / 5, rr = i % 2 ? k * 0.45 : k * 1.05; g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    g.closePath(); g.fill();
   } else if (kind === "clinic") {
     g.fillRect(-k * 0.28, -k * 0.85, k * 0.56, k * 1.7); g.fillRect(-k * 0.85, -k * 0.28, k * 1.7, k * 0.56);
   } else {
@@ -223,6 +229,13 @@ export class HUD {
       }
       drawIcon(g, iconKind(v, this.owned), R + px, R + py, 15);
     }
+    for (const l of this.landmarks || []) {
+      const dx = (l.x - car.x) * sc, dz = (l.z - car.z) * sc;
+      const px = dx * cs - dz * sn, py = dx * sn + dz * cs, d = Math.hypot(px, py);
+      const k = this.found && this.found.includes(l.id) ? "landmark" : "unfound";
+      if (d > R - 14) drawIcon(g, k, R + (px / d) * (R - 16), R + (py / d) * (R - 16), 10);
+      else drawIcon(g, k, R + px, R + py, 17);
+    }
     for (const p of this.pickups || []) {
       const dx = (p.x - car.x) * sc, dz = (p.z - car.z) * sc;
       if (Math.hypot(dx, dz) > Math.min(R - 10, 60 * sc)) continue;
@@ -249,7 +262,7 @@ export class BigMap {
     this.legend = root.querySelector(".legend");
   }
 
-  draw(car, venues = [], owned = []) {
+  draw(car, venues = [], owned = [], landmarks = [], found = []) {
     const g = this.cv.getContext("2d");
     g.drawImage(this.img, 0, 0);
     g.textAlign = "center"; g.textBaseline = "middle";
@@ -265,6 +278,15 @@ export class BigMap {
       const k = iconKind(v, owned);
       counts[k] = (counts[k] || 0) + 1;
       drawIcon(g, k, (v.x + HALF) / M_PER_PX, (v.z + HALF) / M_PER_PX, 9);
+    }
+    for (const l of landmarks) {
+      const k = found.includes(l.id) ? "landmark" : "unfound";
+      counts[k] = (counts[k] || 0) + 1;
+      drawIcon(g, k, (l.x + HALF) / M_PER_PX, (l.z + HALF) / M_PER_PX, 13);
+      if (found.includes(l.id)) {
+        g.font = '600 15px "Space Grotesk", system-ui, sans-serif'; g.lineWidth = 4; g.strokeStyle = "rgba(255,253,249,0.9)"; g.fillStyle = "#182b2e";
+        g.strokeText(l.name, (l.x + HALF) / M_PER_PX, (l.z + HALF) / M_PER_PX + 22); g.fillText(l.name, (l.x + HALF) / M_PER_PX, (l.z + HALF) / M_PER_PX + 22);
+      }
     }
     this.legend.innerHTML = Object.keys(ICONS).filter((k) => counts[k]).map((k) => {
       const c = document.createElement("canvas"); c.width = c.height = 36;

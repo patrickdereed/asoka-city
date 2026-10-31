@@ -6,6 +6,30 @@ Visualforce tab. The whole city is generated from a seed in code, so the bundle 
 **This build: free roam with an economy.** The city, driving, traffic, day and night, walking, money,
 weapons, and buildings you walk into. The Audit patrols, missions and the 25-hour main story come next.
 
+## Climbing and landmarks
+
+About a quarter of the walk-ups downtown, in Commit Row, Cadence, the docks, Meridian and on the isles
+carry a fire escape, and a few have scaffolding; every one climbs to the roof, and roofs are walkable
+(fall off one and it hurts). Each district has a landmark to explore, with cash waiting at its highest
+point; they appear on the map as stars once found.
+
+| District | Landmark |
+|---|---|
+| The Console | Go-Live Tower site: nine open floors, a stair core and a tower crane |
+| Commit Row | The Merge roof gardens: four roofs joined by bridges, a rooftop bar |
+| Cadence Quarter | Neon Lane: a market lane under neon arches, a stage, fire escapes |
+| Sprint Gardens | Kickflip Skate Park: half pipe, funbox, quarter pipes, bleachers |
+| Instinct Park | Lakeside Lookout: a boardwalk to a pavilion on the lake, a lookout tower |
+| Meridian Heights | Meridian Helipad: a hospital tower's fire escape up to the air ambulance |
+| Guideline Hills | Summit Observatory: dome, lookout, radio mast and a 30 m Asoka mark |
+| The Pipeline | Container Stacks: stairs and catwalks over the containers, a gantry |
+| Scratch Key | Point Scratch Lighthouse, climbed by its service stair |
+| Sandbox Isles | Sandbox Pier: big wheel, carousel and stalls over the ocean |
+| Preview Point | Preview Marina: jetties and yachts you can step aboard |
+
+`structures.js` builds them as primitive parts plus walk surfaces (decks and stairs); `walker.js`
+walks on those surfaces and on roofs. `node test/climb.test.js` walks fire escapes up and down.
+
 ## Money, shops, weapons and homes
 
 You start with $2,500. Ninety envelopes of unclaimed expenses lie on the pavements (more out in the hills
@@ -70,6 +94,7 @@ create your character: a name, man / woman / non-binary, the pronouns the story 
 node test/serve.mjs          # http://localhost:8788 mirrors the Visualforce page
 node test/world.test.js      # world generation: timing, connectivity, overlaps, decks
 node test/drive.test.js      # physics and traffic
+node test/climb.test.js      # fire escapes up and down, landmark prizes reachable
 ```
 
 ## Deploy

@@ -5,6 +5,7 @@
 // The map spans -4096..4096 on both axes and is streamed in 256 m chunks.
 
 import { clamp, lerp, smoothstep, hash2, fbm, rng } from "./util.js";
+import { Parts, LANDMARKS, fireEscape, escapeFootprint } from "./structures.js";
 
 export const SIZE = 8192, HALF = 4096, CHUNK = 256, NCH = 32, GRID = 128, NG = 64;
 export const HRES = 8, HN = SIZE / HRES + 1;
@@ -175,6 +176,7 @@ export class World {
     this.buildPolylineRoads();
     this.buildGrid();
     this.finishGraph();
+    this.planLandmarks();
     this.planVenues();
     this.planPickups();
   }
@@ -558,7 +560,7 @@ export class World {
     const r = rng(hash2(cx, cz, this.seed) * 4294967296);
     const out = {
       cx, cz, x0, z0, buildings: [], slabs: [], props: [], glows: [], signs: [], parked: [],
-      boxes: [], circles: [], segs: this.chunkSegs[cx + cz * NCH], tower: null, venues: [],
+      boxes: [], circles: [], segs: this.chunkSegs[cx + cz * NCH], tower: null, venues: [], parts: [], lparts: [], walk: [],
       nodes: this.chunkNodes[cx + cz * NCH],
     };
     const natural = [];
@@ -571,6 +573,13 @@ export class World {
     this.genRoadside(out, r);
     this.genNature(out, natural, r);
     if (cx === Math.floor((TOWER.x + HALF) / CHUNK) && cz === Math.floor((TOWER.z + HALF) / CHUNK)) this.genTower(out);
+    this.applyClears(out);
+    const lm = this.lmChunk.get(cx + cz * NCH);
+    if (lm) {
+      out.lparts = lm.parts;
+      for (const k of ["walk", "boxes", "circles", "buildings", "glows", "signs"]) out[k].push(...lm[k]);
+    }
+    this.genEscapes(out);
     // Collision grid for the chunk: 8 x 8 buckets of 32 m.
     out.grid = Array.from({ length: 64 }, () => []);
     const put = (o, ax0, az0, ax1, az1) => {
@@ -580,6 +589,13 @@ export class World {
     };
     for (const b of out.boxes) put(b, b.x0, b.z0, b.x1, b.z1);
     for (const c of out.circles) put(c, c.x - c.r, c.z - c.r, c.x + c.r, c.z + c.r);
+    // Walkable decks and stairs, bucketed the same way.
+    out.wgrid = Array.from({ length: 64 }, () => []);
+    for (const w of out.walk) {
+      const i0 = clamp(Math.floor((w.x0 - x0) / 32), 0, 7), i1 = clamp(Math.floor((w.x1 - x0) / 32), 0, 7);
+      const j0 = clamp(Math.floor((w.z0 - z0) / 32), 0, 7), j1 = clamp(Math.floor((w.z1 - z0) / 32), 0, 7);
+      for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) out.wgrid[i + j * 8].push(w);
+    }
     return out;
   }
 
@@ -820,6 +836,7 @@ export class World {
         const spec = kind === "home" ? HOMES[c.dist] : K.districts.includes(c.dist) ? K : null;
         if (!spec) continue;
         const v = this.fitVenue(c, kind, spec);
+        if (v && this.clears.some((z) => v.x1 > z.x0 - 6 && v.x0 < z.x1 + 6 && v.z1 > z.z0 - 6 && v.z0 < z.z1 + 6)) continue;
         if (!v || this.venues.some((o) => Math.hypot(o.x - v.x, o.z - v.z) < (o.kind === kind ? K.spacing : 170))) continue;
         this.venues.push(v);
         this.venueAt.set(c.i * 100 + c.j, v);
@@ -900,6 +917,175 @@ export class World {
       if (this.venues.some((v) => Math.hypot(v.x - p.x, v.z - p.z) < 12)) continue;
       const value = d === "hills" || d === "park" ? r.int(8, 30) * 50 : r.int(2, 16) * 50;
       this.pickups.push({ id: this.pickups.length, x: p.x, z: p.z, y: this.height(p.x, p.z) + 0.15, value });
+    }
+    // A bigger prize at the top of every landmark.
+    for (const l of this.landmarks) this.pickups.push({ id: 1000 + this.landmarks.indexOf(l), x: l.prize.x, z: l.prize.z, y: l.prize.y, value: l.prize.value, lm: l.id });
+  }
+
+  // --------------------------------------------------------------------------- landmarks
+
+  // A block's buildable lot inside its pavements.
+  lotOf(i, j) {
+    const sides = [0, 1, 2, 3].map((s) => this.sideRoad(i, j, s));
+    const x0 = -HALF + i * GRID, z0 = -HALF + j * GRID;
+    const hwOf = (s) => (sides[s] ? sides[s].hw + 0.3 : 2);
+    return {
+      sides, x0: x0 + hwOf(0) + (sides[0] ? 4.5 : 0), x1: x0 + GRID - hwOf(1) - (sides[1] ? 4.5 : 0),
+      z0: z0 + hwOf(2) + (sides[2] ? 4.5 : 0), z1: z0 + GRID - hwOf(3) - (sides[3] ? 4.5 : 0),
+    };
+  }
+
+  // The flattest whole block in a district, nearest a preferred point.
+  blockSite(dist, tx, tz, coastal = false) {
+    let best = null, bd = Infinity;
+    for (let j = 1; j < NG - 1; j++) for (let i = 1; i < NG - 1; i++) {
+      const cxm = -HALF + i * GRID + GRID / 2, czm = -HALF + j * GRID + GRID / 2;
+      if (districtAt(cxm, czm) !== dist || shoreDist(cxm, czm) < 30) continue;
+      if (cxm > PLAZA.x0 - 140 && cxm < PLAZA.x1 + 140 && czm > PLAZA.z0 - 140 && czm < PLAZA.z1 + 140) continue;
+      if (coastal && shoreDist(cxm, czm) > 160) continue;
+      const L = this.lotOf(i, j);
+      if (!L.sides.some(Boolean) || L.x1 - L.x0 < 95 || L.z1 - L.z0 < 95) continue;
+      const land = this.landOK(L.x0, L.z0, L.x1, L.z1, 4);
+      if (!land || land.hi - land.lo > 1.6) continue;
+      const d = Math.hypot(cxm - tx, czm - tz);
+      if (d < bd) { bd = d; best = { x0: L.x0, z0: L.z0, x1: L.x1, z1: L.z1, gy: land.hi + 0.1 }; }
+    }
+    return best;
+  }
+
+  planLandmarks() {
+    this.landmarks = []; this.clears = []; this.lmChunk = new Map();
+    const nearRoad = (x, z, pad) => this.nearRoad(x, z, null, pad);
+    const lake = () => {
+      for (let x = LAKE.x + LAKE.rx - 60; x < LAKE.x + LAKE.rx + 120; x++) if (this.height(x, LAKE.z) > 0.3) return { x, z: LAKE.z };
+      return null;
+    };
+    const summit = () => {
+      let best = null, bh = -Infinity;
+      for (let z = -3900; z < -2500; z += 24) for (let x = -3300; x < 1300; x += 24) {
+        const h = this.height(x, z);
+        if (h <= bh || shoreDist(x, z) < 60) continue;
+        let lo = h, hi = h;
+        for (const [dx, dz] of [[-18, 0], [18, 0], [0, -18], [0, 18], [16, 16], [-16, -16], [0, 40]]) { const q = this.height(x + dx, z + dz); lo = Math.min(lo, q); hi = Math.max(hi, q); }
+        if (hi - lo > 3.5 || nearRoad(x, z, 22)) continue;
+        bh = h; best = { x, z };
+      }
+      return best;
+    };
+    const tip = () => {
+      for (let z = -3330; z < -2800; z += 4) for (const dx of [0, -40, 40]) {
+        const x = (islW(z) + islE(z)) / 2 + dx;
+        if (shoreDist(x, z) > 20 && this.height(x, z) > 0.6 && !nearRoad(x, z + 6, 18)) return { x, z: z + 4 };
+      }
+      return null;
+    };
+    const pier = () => {
+      for (const z of [-300, -200, -420, -80]) {
+        let xl = null;
+        for (let x = islE(z) - 140; x < islE(z) + 10; x++) if (this.height(x, z) >= 1.5) xl = x;
+        if (xl != null && !nearRoad(xl - 10, z, 4)) return { x: xl, z };
+      }
+      return null;
+    };
+    const marina = () => {
+      for (const z of [1750, 1680, 1820, 1600]) {
+        let xs = null;
+        for (let x = islW(z) + 90; x > islW(z) - 30; x--) if (this.height(x, z) < 0.5) { xs = x + 1; break; }
+        if (xs != null && !nearRoad(xs + 15, z, 7) && !nearRoad(xs + 4, z, 3)) return { x: xs, z };
+      }
+      return null;
+    };
+    const sites = {
+      console: this.blockSite("console", -450, 450), uptown: this.blockSite("uptown", 600, -1650),
+      cadence: this.blockSite("cadence", 300, 1550), gardens: this.blockSite("gardens", -2300, 1700),
+      meridian: this.blockSite("meridian", -2650, -1700), docks: this.blockSite("docks", -200, 2950, true),
+      park: lake(), hills: summit(), scratch: tip(), sandbox: pier(), preview: marina(),
+    };
+    for (const key of Object.keys(sites)) {
+      const site = sites[key];
+      if (!site) continue;
+      const P = new Parts();
+      const info = LANDMARKS[key](P, site, this);
+      // The area it occupies: the lot, or everything it built.
+      let zone;
+      if (site.x0 != null) zone = { x0: site.x0 - 1, z0: site.z0 - 1, x1: site.x1 + 1, z1: site.z1 + 1 };
+      else {
+        zone = { x0: Infinity, z0: Infinity, x1: -Infinity, z1: -Infinity };
+        for (const r of [...P.walk, ...P.boxes, ...P.buildings]) { zone.x0 = Math.min(zone.x0, r.x0); zone.z0 = Math.min(zone.z0, r.z0); zone.x1 = Math.max(zone.x1, r.x1); zone.z1 = Math.max(zone.z1, r.z1); }
+        zone.x0 -= 6; zone.z0 -= 6; zone.x1 += 6; zone.z1 += 6;
+      }
+      this.clears.push(zone);
+      this.landmarks.push({ id: key, district: key, ...info, zone });
+      const at = (x, z) => {
+        const cx = clamp(Math.floor((x + HALF) / CHUNK), 0, NCH - 1), cz = clamp(Math.floor((z + HALF) / CHUNK), 0, NCH - 1), k = cx + cz * NCH;
+        if (!this.lmChunk.has(k)) this.lmChunk.set(k, { parts: [], walk: [], boxes: [], circles: [], buildings: [], glows: [], signs: [] });
+        return this.lmChunk.get(k);
+      };
+      const span = (r, list) => {
+        const c0 = clamp(Math.floor((r.x0 + HALF) / CHUNK), 0, NCH - 1), c1 = clamp(Math.floor((r.x1 + HALF) / CHUNK), 0, NCH - 1);
+        const k0 = clamp(Math.floor((r.z0 + HALF) / CHUNK), 0, NCH - 1), k1 = clamp(Math.floor((r.z1 + HALF) / CHUNK), 0, NCH - 1);
+        for (let k = k0; k <= k1; k++) for (let c = c0; c <= c1; c++) at(-HALF + c * CHUNK + 1, -HALF + k * CHUNK + 1)[list].push(r);
+      };
+      for (const p of P.parts) { const q = p[0] === 3 ? p[1][0] : [p[1], 0, p[3]]; at(q[0], q[2]).parts.push(p); }
+      for (const w of P.walk) span(w, "walk");
+      for (const b of P.boxes) span(b, "boxes");
+      for (const c of P.circles) at(c.x, c.z).circles.push(c);
+      for (const b of P.buildings) at((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2).buildings.push(b);
+      for (const g of P.glows) at(g.x, g.z).glows.push(g);
+      for (const g of P.signs) at(g.x, g.z).signs.push(g);
+    }
+  }
+
+  // Clear generated buildings, trees and signs out of the landmark areas.
+  applyClears(out) {
+    const X0 = out.x0, Z0 = out.z0, X1 = X0 + CHUNK, Z1 = Z0 + CHUNK;
+    for (const v of this.clears) {
+      if (v.x1 < X0 || v.x0 > X1 || v.z1 < Z0 || v.z0 > Z1) continue;
+      const hit = (a) => a.x1 > v.x0 && a.x0 < v.x1 && a.z1 > v.z0 && a.z0 < v.z1;
+      const inside = (x, z) => x > v.x0 && x < v.x1 && z > v.z0 && z < v.z1;
+      out.buildings = out.buildings.filter((b) => !hit(b));
+      out.boxes = out.boxes.filter((b) => !hit(b));
+      for (const p of out.props) if (inside(p.x, p.z) && p.kind !== "lamp") p.kind = "gone";
+      out.circles = out.circles.filter((c) => c.kind === "lamp" || !inside(c.x, c.z));
+      out.signs = out.signs.filter((s) => !inside(s.x, s.z));
+      out.glows = out.glows.filter((g) => g.kind === "lamp" || !inside(g.x, g.z));
+    }
+  }
+
+  // Fire escapes on about a third of the walk-ups and scaffolding on a few, each climbable to the roof.
+  genEscapes(out) {
+    const X0 = out.x0, Z0 = out.z0;
+    const taken = [];
+    for (const b of out.buildings.slice()) {
+      if (b.venue || b.lm || (b.tiers && b.tiers.length) || b.roof) continue;
+      if (![ST.DECO, ST.OFFICE, ST.WARE].includes(b.style) || b.h < 8 || b.h > 48) continue;
+      const d = districtAt((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2);
+      if (!ESCAPE_DIST.has(d)) continue;
+      const hsh = hash2(Math.round(b.x0 * 3), Math.round(b.z0 * 3), 61);
+      const kind = hsh < 0.05 && SCAFFOLD_DIST.has(d) ? "scaffold" : hsh < 0.27 ? "escape" : null;
+      if (!kind) continue;
+      const shift = hash2(Math.round(b.x1), Math.round(b.z1), 5) * 2 - 1;
+      const order = [0, 1, 2, 3].sort((p, q) => hash2(Math.round(b.x0) + p, Math.round(b.z0), 8) - hash2(Math.round(b.x0) + q, Math.round(b.z0), 8));
+      for (const side of order) {
+        const f = escapeFootprint(b, side, kind, shift);
+        if (f.L < 6) continue;
+        const [rx0, rz0, rx1, rz1] = f.rect;
+        if (rx0 < X0 + 0.5 || rz0 < Z0 + 0.5 || rx1 > X0 + CHUNK - 0.5 || rz1 > Z0 + CHUNK - 0.5) continue;
+        const clash = (o) => o.x1 > rx0 - 0.4 && o.x0 < rx1 + 0.4 && o.z1 > rz0 - 0.4 && o.z0 < rz1 + 0.4;
+        if (out.boxes.some((o) => o.x0 != null && !(o.x0 === b.x0 && o.z0 === b.z0 && o.x1 === b.x1) && clash(o))) continue;
+        if (taken.some(clash) || out.venues.some((v) => v.x > rx0 - 6 && v.x < rx1 + 6 && v.z > rz0 - 6 && v.z < rz1 + 6)) continue;
+        if ([[rx0, rz0], [rx1, rz0], [rx0, rz1], [rx1, rz1]].some(([x, z]) => shoreDist(x, z) < 2 || this.nearRoad(x, z, out, 0.4))) continue;
+        const hs = [[rx0, rz0], [rx1, rz1], [rx0, rz1], [rx1, rz0]].map(([x, z]) => this.height(x, z));
+        if (Math.max(...hs) - Math.min(...hs) > 1) continue;
+        const P = new Parts();
+        const col = d === "cadence" ? 0x2f757c : d === "docks" ? 0x5a4636 : d === "sandbox" || d === "scratch" || d === "preview" ? 0xefe3d2 : 0x2b3133;
+        const gx = side >= 2 ? f.a0 + 0.6 : (rx0 + rx1) / 2, gz = side >= 2 ? (rz0 + rz1) / 2 : f.a0 + 0.6;
+        if (!fireEscape(P, b, side, kind, this.height(gx, gz) + 0.15, shift, col)) continue;
+        out.parts.push(...P.parts); out.walk.push(...P.walk); out.circles.push(...P.circles);
+        taken.push({ x0: rx0, z0: rz0, x1: rx1, z1: rz1 });
+        b.escape = kind; b.escWalk = P.walk;
+        break;
+      }
     }
   }
 
@@ -1097,6 +1283,8 @@ BLOCKS.scratch = BLOCKS.isles;
 BLOCKS.sandbox = BLOCKS.isles;
 BLOCKS.preview = BLOCKS.isles;
 
+const ESCAPE_DIST = new Set(["console", "uptown", "cadence", "docks", "meridian", "sandbox", "scratch", "preview"]);
+const SCAFFOLD_DIST = new Set(["console", "uptown", "docks", "cadence"]);
 const TOWN = ["console", "uptown", "cadence", "gardens", "docks", "meridian", "sandbox", "scratch", "preview"];
 export const VENUE_KINDS = {
   arms:    { name: "Breakpoint Arms", sign: 12, count: 30, spacing: 460, w: 14, d: 16, h: 7, style: ST.DECO, color: 0x283f43, accent: 0xff6018, districts: TOWN },

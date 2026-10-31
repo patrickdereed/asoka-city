@@ -523,6 +523,28 @@ function storefront(g, v) {
   g.e.cdata = [0, 0];
 }
 
+// Fire escapes, scaffolding and landmarks arrive from map.js as primitive lists:
+// [0 box: cx y cz sx sy sz col e yaw], [1 tube: a b r0 r1 col e n], [2 blob: c r col e], [3 hexa: corners col e].
+function drawParts(g, list) {
+  for (const p of list) {
+    if (p[0] === 0) { g.e.cdata = [0, p[8]]; g.box(0, p[5] / 2, 0, p[4], p[5], p[6], hex(p[7]), p[9], p[1], p[2], p[3]); }
+    else if (p[0] === 1) {
+      if (Math.hypot(p[4] - p[1], p[5] - p[2], p[6] - p[3]) < 1e-4) continue;
+      g.e.cdata = [0, p[10]]; g.tube([p[1], p[2], p[3]], [p[4], p[5], p[6]], p[7], p[8], hex(p[9]), p[11]);
+    } else if (p[0] === 2) { g.e.cdata = [0, p[8]]; g.blob(p[1], p[2], p[3], p[4], p[5], p[6], hex(p[7]), p[1] * 0.1); }
+    else if (p[0] === 3) { g.e.cdata = [0, p[3]]; g.hexa(p[1], hex(p[2])); }
+    else { g.e.cdata = [0, p[3]]; g.quad(p[1][0], p[1][1], p[1][2], p[1][3], hex(p[2]), null, [0, 1, 0]); }
+  }
+  g.e.cdata = [0, 0];
+}
+
+function buildLandmarks(data) {
+  if (!data.lparts || !data.lparts.length) return null;
+  const g = new Geo({ cdata: 2 });
+  drawParts(g, data.lparts);
+  return g.count ? g.build() : null;
+}
+
 function buildStreet(data, knocked) {
   const g = new Geo({ cdata: 2 });
   const ranges = new Map();
@@ -537,6 +559,7 @@ function buildStreet(data, knocked) {
     ranges.set(p.id, [start, g.count - start]);
   }
   for (const v of data.venues || []) storefront(g, v);
+  drawParts(g, data.parts || []);
   return g.count ? { geo: g.build(), ranges } : null;
 }
 
@@ -571,9 +594,9 @@ function buildGlows(world, data, knocked) {
   for (const o of data.glows) {
     if (o.kind === "lamp" && knocked.has(o.id)) continue;
     const k = GLOW_KIND[o.kind];
-    const blink = o.kind === "beacon" ? hash2(Math.round(o.x), Math.round(o.z)) : -1;
+    const blink = o.kind === "beacon" && o.col == null ? hash2(Math.round(o.x), Math.round(o.z)) : -1;
     const gy = world.ground(o.x, o.z, o.y);
-    list.push([o.x, o.y, o.z, k.col, k.day, k.size, 0, blink, k.i, o.id, gy]);
+    list.push([o.x, o.y, o.z, o.col != null ? hex(o.col) : k.col, k.day, k.size, 0, blink, k.i, o.id, gy]);
     if (o.kind === "lamp") {
       list.push([o.x, gy + 0.12, o.z, GLOW_KIND.pool.col, 0, GLOW_KIND.pool.size, 1, -1, GLOW_KIND.pool.i, o.id, gy]);
       list.push([o.x, o.y, o.z, k.col, 0, 2.6, -1, -1, GLOW_KIND.streak.i, o.id, gy]);
@@ -695,6 +718,7 @@ export class CityView {
     add(buildRoads(this.w, data), this.m.road);
     add(buildBuildings(this.w, data), this.m.build, 0, true);
     add(buildFlora(data), this.m.prop, 0, true);
+    add(buildLandmarks(data), this.m.prop, 0, true);
     add(buildSigns(data), this.signMat);
     const glows = buildGlows(this.w, data, this.knockedSet(cx, cz));
     let glowMesh = null;

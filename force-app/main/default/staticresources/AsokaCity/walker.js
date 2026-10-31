@@ -4,7 +4,7 @@ import { clamp, lerp, angleWrap } from "./util.js";
 import { HALF, CHUNK, NCH } from "./map.js";
 import { sat } from "./vehicle.js";
 
-const R = 0.35, R0 = 0.3;
+const R = 0.35, R0 = 0.3, STEP = 0.6;
 
 export class Walker {
   constructor(world) {
@@ -12,12 +12,36 @@ export class Walker {
     this.x = 0; this.y = 0; this.z = 0; this.yaw = 0;
     this.speed = 0; this.run = 0; this.person = null;
     this.room = null;   // { W, D, boxes, ox, oy, oz } while indoors
+    this.vy = 0; this.on = null; this.fall = 0;   // fall: damage from the last landing, read by the game
   }
 
-  place(x, z, yaw) {
+  // What's underfoot at (x, z) for someone at height y: the terrain or a bridge deck, or a walkable
+  // deck, stair or roof no more than a step above.
+  support(x, z, y) {
+    const g = this.w.ground(x, z, y + 1), deck = this.w.onDeck;
+    let h = deck ? g : g + 0.15, on = null, water = !deck && g < 0.05;
+    const cx = Math.floor((x + HALF) / CHUNK), cz = Math.floor((z + HALF) / CHUNK);
+    if (cx < 0 || cz < 0 || cx >= NCH || cz >= NCH) return { h, on, water };
+    const c = this.w.chunk(cx, cz);
+    const k = clamp(Math.floor((x - c.x0) / 32), 0, 7) + clamp(Math.floor((z - c.z0) / 32), 0, 7) * 8;
+    for (const s of c.wgrid[k]) {
+      if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
+      const t = s.ax === 1 ? (x - s.x0) / (s.x1 - s.x0) : s.ax === 2 ? (z - s.z0) / (s.z1 - s.z0) : 0;
+      const hs = s.y0 + (s.y1 - s.y0) * t;
+      if (hs <= y + STEP && hs > h) { h = hs; on = s; water = false; }
+    }
+    for (const o of c.grid[k]) {
+      if (o.r != null || o.y1 == null || x < o.x0 || x > o.x1 || z < o.z0 || z > o.z1) continue;
+      if (o.y1 <= y + STEP && o.y1 > h) { h = o.y1; on = o; water = false; }
+    }
+    return { h, on, water };
+  }
+
+  place(x, z, yaw, y = null) {
     this.x = x; this.z = z; this.yaw = yaw;
-    this.y = this.w.ground(x, z, 999);
-    this.speed = 0;
+    this.y = y != null ? y : this.w.ground(x, z, 999) + 0.15;
+    this.speed = 0; this.vy = 0; this.on = null; this.fall = 0;
+    if (y != null) this.on = this.support(x, z, y).on;
   }
 
   get fwdSpeed() { return this.speed; }
@@ -40,11 +64,27 @@ export class Walker {
     this.x = clamp(this.x, -HALF + 60, HALF - 60);
     this.z = clamp(this.z, -HALF + 60, HALF - 60);
     this.collide(obstacles);
-    // No walking into the sea or off a bridge.
-    const g = this.w.ground(this.x, this.z, this.y + 1);
-    if ((!this.w.onDeck && g < 0.05) || g - this.y > 0.9 || this.y - g > 3) {
+    // No walking into the sea, and railed decks and stairs keep you on them.
+    let sup = this.support(this.x, this.z, this.y);
+    if (sup.water || (this.on && this.on.rail && sup.h < this.y - STEP)) {
       this.x = ox; this.z = oz;
-    } else this.y = lerp(this.y, g + (this.w.onDeck ? 0 : 0.15), Math.min(1, dt * 12));
+      sup = this.support(ox, oz, this.y);
+    }
+    if (sup.h >= this.y - 0.3) {
+      if (this.vy < -11) this.fall += (-this.vy - 11) * 9;
+      this.vy = 0;
+      this.y += (sup.h - this.y) * Math.min(1, dt * 16);
+      this.on = sup.on;
+    } else {
+      // Off an edge: fall, and land hard from high enough.
+      this.vy -= 22 * dt;
+      this.y += this.vy * dt;
+      this.on = null;
+      if (this.y <= sup.h) {
+        if (this.vy < -11) this.fall += (-this.vy - 11) * 9;
+        this.y = sup.h; this.vy = 0; this.on = sup.on;
+      }
+    }
   }
 
   collideRoom() {
@@ -76,7 +116,7 @@ export class Walker {
         if (o.r != null) {
           const dx = this.x - o.x, dz = this.z - o.z, d = Math.hypot(dx, dz), m = o.r + R;
           if (d < m && d > 1e-4) { this.x = o.x + (dx / d) * m; this.z = o.z + (dz / d) * m; }
-        } else if (this.y < o.y1) {
+        } else if (this.y < o.y1 - 0.35) {
           const px = clamp(this.x, o.x0, o.x1), pz = clamp(this.z, o.z0, o.z1);
           const dx = this.x - px, dz = this.z - pz, d = Math.hypot(dx, dz);
           if (d < R) {

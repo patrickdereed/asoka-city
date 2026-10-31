@@ -37,7 +37,7 @@ const prefs = (() => { try { return JSON.parse(localStorage.getItem(SAVE_KEY)) |
 const savePrefs = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(prefs)); } catch (e) { /* private mode */ } };
 prefs.quality = prefs.quality || "medium";
 // The save: money, health, weapons, homes and outfits owned, cash already picked up.
-const save = (prefs.save = Object.assign({ money: START_MONEY, hp: 100, armor: 0, weapons: {}, cur: "fists", homes: [], outfits: [], look: null, found: [], home: null }, prefs.save || {}));
+const save = (prefs.save = Object.assign({ money: START_MONEY, hp: 100, armor: 0, weapons: {}, cur: "fists", homes: [], outfits: [], look: null, found: [], home: null, landmarks: [] }, prefs.save || {}));
 
 const canvas = $("gl");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
@@ -93,7 +93,7 @@ async function boot() {
   scene.add(buildTower(world, mats));
   const mapImg = drawMapImage(world);
   hud = new HUD($("hud"), world, mapImg);
-  hud.venues = world.venues; hud.owned = save.homes; hud.pickups = [];
+  hud.venues = world.venues; hud.owned = save.homes; hud.pickups = []; hud.landmarks = world.landmarks; hud.found = save.landmarks;
   bigmap = new BigMap($("bigmap"), world, mapImg);
   input = new Input();
   audio = new Audio();
@@ -298,7 +298,7 @@ function showPause() {
         <label>Detail <select id="p-q">${Object.keys(QUALITY).map((k) => `<option ${k === prefs.quality ? "selected" : ""}>${k}</option>`).join("")}</select></label>
         <label>Time <select id="p-time"><option value="">Keep</option><option value="6.4">Sunrise</option><option value="12">Midday</option><option value="18">Golden hour</option><option value="21.5">Night</option></select></label>
       </div>
-      <p class="fine">Money ${fmtMoney(save.money)} · ${save.homes.length} home${save.homes.length === 1 ? "" : "s"} · ${Object.keys(save.weapons).length} weapon${Object.keys(save.weapons).length === 1 ? "" : "s"} · ${save.found.length} of ${world.pickups.length} cash envelopes found</p>
+      <p class="fine">Money ${fmtMoney(save.money)} · ${save.homes.length} home${save.homes.length === 1 ? "" : "s"} · ${Object.keys(save.weapons).length} weapon${Object.keys(save.weapons).length === 1 ? "" : "s"} · ${save.found.filter((id) => id < 1000).length} of ${world.pickups.filter((p) => !p.lm).length} cash envelopes · ${save.landmarks.length} of ${world.landmarks.length} landmarks</p>
     </div></div>`;
   ui.classList.remove("hidden");
   $("p-go").onclick = resume;
@@ -412,7 +412,7 @@ function toggleFoot() {
 function toggleMap(open = !mapOpen) {
   mapOpen = open;
   $("bigmap").classList.toggle("hidden", !open);
-  if (open) { releaseMouse(); bigmap.draw(mode === "foot" ? walker : player, world.venues, save.homes); }
+  if (open) { releaseMouse(); bigmap.draw(mode === "foot" ? walker : player, world.venues, save.homes, world.landmarks, save.landmarks); }
 }
 
 function respawn() {
@@ -694,6 +694,7 @@ function tick(dt) {
     const obs = inside ? [] : [{ x: player.x, z: player.z, fx: -Math.sin(player.yaw), fz: -Math.cos(player.yaw), hl: player.hl, hw: player.hw }];
     if (!inside) for (const c of traffic.cars) if (Math.abs(c.x - walker.x) < 6 && Math.abs(c.z - walker.z) < 6) obs.push({ x: c.x, z: c.z, fx: -Math.sin(c.yaw), fz: -Math.cos(c.yaw), hl: c.hl, hw: c.hw });
     walker.step(dt, { mx: fx * f.fwd + rx * f.side, mz: fz * f.fwd + rz * f.side, run: f.run, face: aiming || arsenal.act > 0 ? camYaw : null }, obs);
+    if (walker.fall > 0) { const d = walker.fall; walker.fall = 0; audio.bang(Math.min(18, d / 4)); hurtPlayer(d); }
     me.holder.position.set(walker.x, walker.y, walker.z);
     me.holder.rotation.y = walker.yaw;
     me.update(dt, Math.abs(walker.speed), walker.run);
@@ -735,7 +736,8 @@ function tick(dt) {
     traffic.update(dt, mode === "drive" ? player : { x: walker.x, z: walker.z, hl: 0.5 }, focus.x, focus.z, 140, 470);
     traffic.collidePlayer(player);
     crowd.update(dt, camera.position, mode === "drive" ? player : null, mode === "foot" ? walker : null);
-    collectCash(focus, mode === "drive" ? 2.6 : 1.3);
+    collectCash(mode === "drive" ? player : walker, mode === "drive" ? 2.6 : 1.3);
+    discover(mode === "drive" ? player : walker);
   }
   combat.update(dt, camera, renderer.getDrawingBufferSize(v3.set(0, 0, 0)).y);
   for (const ev of player.events) {
@@ -761,16 +763,28 @@ function tick(dt) {
 function collectCash(at, r) {
   for (const p of world.pickups) {
     if (Math.abs(p.x - at.x) > r || Math.abs(p.z - at.z) > r || save.found.includes(p.id)) continue;
-    if (Math.hypot(p.x - at.x, p.z - at.z) > r) continue;
+    if (Math.hypot(p.x - at.x, p.z - at.z) > r || Math.abs(p.y - at.y) > 2.5) continue;
     save.found.push(p.id);
     earn(p.value);
-    hud.toast(`Unclaimed expenses: +${fmtMoney(p.value)} (${save.found.length} of ${world.pickups.length} found)`, 3);
+    const lm = p.lm && world.landmarks.find((l) => l.id === p.lm);
+    hud.toast(lm ? `Top of ${lm.name}: +${fmtMoney(p.value)}` : `Unclaimed expenses: +${fmtMoney(p.value)} (${save.found.filter((id) => id < 1000).length} of ${world.pickups.filter((q) => !q.lm).length} found)`, 4);
     saveNow();
   }
   hud.pickups = world.pickups.filter((p) => !save.found.includes(p.id) && Math.abs(p.x - at.x) < 80 && Math.abs(p.z - at.z) < 80);
 }
 
 let camHold = null;   // test hook: { pos: [x, y, z], look: [x, y, z] }
+// Landmarks: one in every district, each with cash at its highest point.
+function discover(at) {
+  for (const l of world.landmarks) {
+    if (save.landmarks.includes(l.id) || Math.hypot(l.x - at.x, l.z - at.z) > l.r) continue;
+    save.landmarks.push(l.id);
+    audio.cash(true);
+    hud.toast(`Landmark found: ${l.name} (${save.landmarks.length} of ${world.landmarks.length}). There's cash at the top.`, 6);
+    saveNow();
+  }
+}
+
 function updateCamera(dt) {
   const p = player;
   if (camHold) {
