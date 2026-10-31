@@ -49,5 +49,7 @@ sf org assign permset --name Asoka_City --target-org meridian10
 
 ## Credits
 
-three.js r170 (MIT, `three.LICENSE.txt`). Space Grotesk and Space Mono (SIL Open Font License,
-`fonts/*-OFL.txt`). Everything else is original.
+three.js r170 and its GLTFLoader (MIT, `three.LICENSE.txt`). Space Grotesk and Space Mono (SIL Open Font
+License, `fonts/*-OFL.txt`). The 12 car models are Creative Commons Attribution 4.0 models from Sketchfab
+(11 by Daniel Zhabotinsky, one by mk2design), converted by Rally Legends' build tool; each
+`AsokaCityCars*/CREDITS.txt` names the model, author and source. Everything else is original.

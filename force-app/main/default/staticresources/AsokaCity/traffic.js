@@ -16,6 +16,8 @@ export class Traffic {
     this.r = rng(seed);
     this.max = 40;
     this.spawnT = 0;
+    this.types = CAR_TYPES;
+    this.cabType = 4;
   }
 
   laneStart(e, dir, lane) {
@@ -42,11 +44,12 @@ export class Traffic {
       const off = e.laneOff[lane];
       this.w.edgePoint(e, p.s, dir > 0 ? off : -off, tmp);
       if (this.cars.some((c) => Math.hypot(c.x - tmp.x, c.z - tmp.z) < 14)) continue;
-      const type = r() < 0.12 ? 4 : r.int(0, 3);
-      const t = CAR_TYPES[type];
+      const cab = this.cabType >= 0 && r() < 0.12;
+      const type = cab ? this.cabType : r.int(0, this.types.length - 1);
+      const t = this.types[type];
       const car = {
         mode: "lane", e, dir, lane, s: p.s, type, spec: t, m: t.mass,
-        color: type === 4 ? 0xff6018 : r.pick(TRAFFIC_COLORS),
+        color: cab ? 0xff6018 : r.pick(TRAFFIC_COLORS),
         x: tmp.x, z: tmp.z, y: tmp.y, yaw: Math.atan2(-tmp.tx * dir, -tmp.tz * dir),
         v: (SPEED[e.type] || 12) * 0.8, cruise: (SPEED[e.type] || 12) * r.range(0.85, 1.12),
         vx: 0, vz: 0, r: 0, stuck: 0, ignore: 0, hl: t.L / 2, hw: t.W / 2, spin: 0, brake: false,

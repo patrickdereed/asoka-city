@@ -16,6 +16,7 @@
 <script>
 window.AC_USER = '{!JSENCODE($User.Id)}';
 window.AC_NAME = '{!JSENCODE($User.FirstName)}';
+window.AC_RES = { AsokaCityCars: '{!URLFOR($Resource.AsokaCityCars)}', AsokaCityCars2: '{!URLFOR($Resource.AsokaCityCars2)}', AsokaCityCars3: '{!URLFOR($Resource.AsokaCityCars3)}', AsokaCityCars4: '{!URLFOR($Resource.AsokaCityCars4)}', AsokaCityCars5: '{!URLFOR($Resource.AsokaCityCars5)}' };
 </script>
 <script type="module" src="{!URLFOR($Resource.AsokaCity, 'main.js')}"></script>
 </body>

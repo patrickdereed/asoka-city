@@ -284,8 +284,9 @@ void main() {
 
 export const PROP_VS = /* glsl */ `
 ${STD}
-attribute vec2 cdata; varying float vE; varying float vPaint;
+attribute vec2 cdata; attribute vec2 luv; varying float vE; varying float vPaint; varying vec2 vLuv;
 void main() {
+  vLuv = luv;
   vec4 lp = vec4(position, 1.);
   vec3 ln = normal;
   #ifdef USE_INSTANCING
@@ -303,12 +304,15 @@ void main() {
 export const PROP_FS = /* glsl */ `
 ${COMMON}
 ${STD}
-varying float vE; varying float vPaint; uniform float uBrake; uniform float uLights; uniform float uGloss;
+varying float vE; varying float vPaint; varying vec2 vLuv; uniform float uBrake; uniform float uLights; uniform float uGloss;
+uniform sampler2D uLivery; uniform float uUseLivery;
 void main() {
   vec3 n = normalize(vN);
   if (!gl_FrontFacing) n = -n;
   float sh = shadowAt(vW, n);
-  vec3 col = vCol * light(n, sh);
+  vec3 alb = vCol;
+  if (uUseLivery > .5 && vPaint > .5) alb = lin(texture2D(uLivery, vLuv).rgb);
+  vec3 col = alb * light(n, sh);
   vec3 V = normalize(vW - uCam);
   if (uGloss > 0.) {
     vec3 R = reflect(V, n);

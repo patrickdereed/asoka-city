@@ -454,6 +454,7 @@ function buildFlora(data) {
 }
 
 const carGeos = [];
+export const KIT_PARKED = { on: false };
 function mergeCar(g, p) {
   if (!carGeos[p.type]) carGeos[p.type] = trafficGeometry(CAR_TYPES[p.type]);
   const src = carGeos[p.type];
@@ -490,7 +491,7 @@ function propFurniture(g, p) {
 function buildStreet(data, knocked) {
   const g = new Geo({ cdata: 2 });
   const ranges = new Map();
-  for (const p of data.parked || []) mergeCar(g, p);
+  if (!KIT_PARKED.on) for (const p of data.parked || []) mergeCar(g, p);
   for (const p of data.props) {
     const start = g.count;
     if (p.kind === "lamp") { if (knocked.has(p.id)) continue; propLamp(g, p); }

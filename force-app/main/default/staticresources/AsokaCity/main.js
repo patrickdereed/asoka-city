@@ -1,11 +1,12 @@
 // Go-Live: Asoka City. Entry point: loading, title screen, main loop, camera and car lights.
 import * as THREE from "./three.module.min.js";
 import { World, SPAWN, HALF, CHUNK, NCH, TOWER } from "./map.js";
-import { makeUniforms, makeMaterials, makeSky, makeSea, makeSignTexture, makeSignMaterial, buildTower, CityView, applyTimeOfDay, glowGeometry, setGlow } from "./render.js";
+import { makeUniforms, makeMaterials, makeSky, makeSea, makeSignTexture, makeSignMaterial, buildTower, CityView, applyTimeOfDay, glowGeometry, setGlow, KIT_PARKED } from "./render.js";
 import { Vehicle, DT } from "./vehicle.js";
 import { Traffic } from "./traffic.js";
 import { CAR_TYPES, PLAYER_CAR, trafficGeometry, playerGeometry, wheelGeometry } from "./cars.js";
 import { HUD, BigMap, drawMapImage } from "./hud.js";
+import { loadKits, asokaLivery, PLAYER_KIT } from "./carkits.js";
 import { Input } from "./input.js";
 import { Audio } from "./audio.js";
 import { clamp, lerp, angleWrap, hex } from "./util.js";
@@ -54,7 +55,7 @@ const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
 const LOGO = `<svg viewBox="0 0 100 90" class="logo" aria-hidden="true"><path d="M50 2 L98 88 L2 88 Z" fill="currentColor"/><circle cx="50" cy="61" r="19" fill="none" stroke="var(--cream)" stroke-width="7"/></svg>`;
 
 let world, U, mats, city, sky, sea, hud, bigmap, input, audio, traffic, player, post, shadow, exposure = 1;
-let playerMesh, wheels = [], trafficMeshes = [], carGlow, carGlowMesh, shadows;
+let playerMesh, wheels = [], trafficMeshes = [], parkedMeshes = [], kits = [], carGlow, carGlowMesh, shadows;
 let hour = 18.0, time = 0, camMode = 0, camYaw = 0, camPos = new THREE.Vector3(), shake = 0;
 let state = "loading", acc = 0, last = performance.now(), mapOpen = false;
 
@@ -81,17 +82,27 @@ async function boot() {
   traffic = new Traffic(world);
   traffic.max = QUALITY[prefs.quality].traffic;
 
+  // Car models (CC BY, shared with Rally Legends). Falls back to the built-in low-poly bodies if they can't load.
+  setLoading("Fetching the cars");
+  await frame();
+  kits = await loadKits((d, n) => setLoading(`Fetching the cars · ${d}/${n}`));
+  KIT_PARKED.on = kits.length > 0;
+  const pkit = kits.find((k) => k.id === PLAYER_KIT);
+  const pspec = pkit ? { ...PLAYER_CAR, L: pkit.spec.L, W: pkit.spec.W, wr: pkit.spec.wr } : PLAYER_CAR;
+
   // Player car
-  player = new Vehicle(world, PLAYER_CAR, { knocked: (chunk, c) => city.knock(chunk, c) });
+  player = new Vehicle(world, pspec, { knocked: (chunk, c) => city.knock(chunk, c) });
   player.place(SPAWN.x, SPAWN.z, SPAWN.yaw);
   const pmat = mats.prop.clone();
-  pmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 1 } };
+  pmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 1 }, uLivery: { value: pkit ? asokaLivery() : null }, uUseLivery: { value: pkit ? 1 : 0 } };
   playerMesh = new THREE.Group();
-  playerMesh.add(new THREE.Mesh(playerGeometry(), pmat));
-  const wg = wheelGeometry(PLAYER_CAR.wr);
-  for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+  playerMesh.add(new THREE.Mesh(pkit ? pkit.body : playerGeometry(), pmat));
+  const wheelSpots = pkit ? pkit.wheels : [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * (PLAYER_CAR.W / 2 - 0.12), y: PLAYER_CAR.wr, z: sz * (PLAYER_CAR.L / 2 - 0.85), front: sz < 0 }));
+  const wg = pkit ? pkit.wheelGeo : wheelGeometry(PLAYER_CAR.wr);
+  wheelSpots.sort((p, q) => (q.front ? 1 : 0) - (p.front ? 1 : 0));
+  for (const ws of wheelSpots) {
     const w = new THREE.Mesh(wg, pmat);
-    w.position.set(sx * (PLAYER_CAR.W / 2 - 0.12), PLAYER_CAR.wr, sz * (PLAYER_CAR.L / 2 - 0.85));
+    w.position.set(ws.x, ws.y, ws.z);
     w.rotation.order = "YXZ";
     w.layers.enable(1);
     playerMesh.add(w); wheels.push(w);
@@ -100,15 +111,23 @@ async function boot() {
   playerMesh.rotation.order = "YXZ";
   scene.add(playerMesh);
 
-  // Traffic: one instanced mesh per body type.
+  // Traffic and parked cars: one instanced mesh per body.
   const tmat = mats.prop.clone();
-  tmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 0.75 } };
-  for (const t of CAR_TYPES) {
-    const im = new THREE.InstancedMesh(trafficGeometry(t), tmat, 64);
-    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3), 3);
+  tmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 0.75 }, uLivery: { value: null }, uUseLivery: { value: 0 } };
+  const bodies = kits.length ? kits.map((k) => ({ geo: k.traffic, spec: k.spec })) : CAR_TYPES.map((t) => ({ geo: trafficGeometry(t), spec: t }));
+  const inst = (geo, n) => {
+    const im = new THREE.InstancedMesh(geo, tmat, n);
+    im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
     im.count = 0; im.frustumCulled = false;
     im.layers.enable(1);
-    scene.add(im); trafficMeshes.push(im);
+    scene.add(im);
+    return im;
+  };
+  for (const b of bodies) trafficMeshes.push(inst(b.geo, 40));
+  if (kits.length) {
+    for (const b of bodies) parkedMeshes.push(inst(b.geo, 24));
+    traffic.types = bodies.map((b) => b.spec);
+    traffic.cabType = Math.max(0, kits.findIndex((k) => k.id === "toyama"));
   }
   carGlow = glowGeometry(600);
   carGlowMesh = new THREE.Mesh(carGlow, mats.glow);
@@ -366,8 +385,9 @@ function render(dt) {
   const counts = trafficMeshes.map(() => 0);
   for (const c of traffic.cars) {
     const im = trafficMeshes[c.type];
+    if (!im) continue;
     const i = counts[c.type]++;
-    if (i >= 64) continue;
+    if (i >= 40) continue;
     e3.set(0, c.yaw, 0);
     q4.setFromEuler(e3);
     v3.set(c.x, c.y, c.z);
@@ -376,7 +396,26 @@ function render(dt) {
     const col = hex(c.color);
     im.instanceColor.setXYZ(i, col[0], col[1], col[2]);
   }
-  trafficMeshes.forEach((im, k) => { im.count = Math.min(64, counts[k]); im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; });
+  trafficMeshes.forEach((im, k) => { im.count = Math.min(40, counts[k]); im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; });
+  if (parkedMeshes.length) {
+    const pc = parkedMeshes.map(() => 0);
+    const cx = camera.position.x, cz = camera.position.z, R = 190;
+    for (const v of city.views.values()) {
+      if (!v.street) continue;
+      for (const p of v.data.parked) {
+        if (Math.abs(p.x - cx) > R || Math.abs(p.z - cz) > R) continue;
+        const k = (Math.floor(Math.abs(p.x * 7.13 + p.z * 3.71)) % parkedMeshes.length);
+        if (pc[k] >= 24) continue;
+        const i = pc[k]++;
+        e3.set(0, p.yaw, 0); q4.setFromEuler(e3); v3.set(p.x, p.y, p.z);
+        m4.compose(v3, q4, s3);
+        parkedMeshes[k].setMatrixAt(i, m4);
+        const col = hex(p.color);
+        parkedMeshes[k].instanceColor.setXYZ(i, col[0], col[1], col[2]);
+      }
+    }
+    parkedMeshes.forEach((im, k) => { im.count = pc[k]; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; });
+  }
 
   // Car lights and blob shadows.
   let n = 0, sh = 0;
