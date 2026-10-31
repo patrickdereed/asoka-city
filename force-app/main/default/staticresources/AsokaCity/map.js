@@ -101,6 +101,8 @@ const PASTEL = [0xfff7ee, 0xf6c6a6, 0xfbe7d8, 0xcbd3c4, 0xd3e0e1, 0xffe9dc, 0xf7
 const TOWERC = [0x283f43, 0x365155, 0x507fa7, 0x8fabaf, 0xd3e0e1, 0xa7957d, 0xefe3d2, 0x2f757c];
 const HOUSEC = [0xfff7ee, 0xf3e6d3, 0xf6c6a6, 0xcbd3c4, 0xd3e0e1, 0xe0a08f, 0xefe3d2, 0xf5d7b0];
 export const NEON = [0xff6a2e, 0xff6a2e, 0x3fd0c9, 0xffc667, 0xcc75a0, 0xfffdf9];
+const URBAN = new Set(["console", "uptown", "cadence", "sandbox", "scratch", "preview", "gardens"]);
+const CAR_COLS = [0xfff7ee, 0xcdbba2, 0x2f757c, 0x507fa7, 0xb8544f, 0xd7a03d, 0xa4517b, 0x8a8073, 0xfffdf9, 0x283f43, 0x5d8f5e, 0xe9e4da];
 export const SIGNS = ["ASOKA", "GO-LIVE", "INSTINCTS", "THE CONSOLE", "SANDBOX ISLES", "MERIDIAN HEALTH", "PIPELINE FREIGHT", "COMMIT ROW", "CADENCE", "GUIDELINE HILLS", "SYSENG", "READY TO PROMOTE"];
 
 // Building styles understood by the building shader.
@@ -552,7 +554,7 @@ export class World {
     const x0 = -HALF + cx * CHUNK, z0 = -HALF + cz * CHUNK;
     const r = rng(hash2(cx, cz, this.seed) * 4294967296);
     const out = {
-      cx, cz, x0, z0, buildings: [], slabs: [], props: [], glows: [], signs: [],
+      cx, cz, x0, z0, buildings: [], slabs: [], props: [], glows: [], signs: [], parked: [],
       boxes: [], circles: [], segs: this.chunkSegs[cx + cz * NCH], tower: null,
       nodes: this.chunkNodes[cx + cz * NCH],
     };
@@ -659,12 +661,46 @@ export class World {
           out.props.push({ kind: "lamp", x: px, z: pz, y: py, ax: tz * side, az: -tx * side, id });
           out.glows.push({ kind: "lamp", x: px + tz * side * 1.6, z: pz - tx * side * 1.6, y: py + 7.6, id });
           if (!elevated) out.circles.push({ x: px, z: pz, r: 0.22, kind: "lamp", id, y1: py + 8 });
+          // Street furniture beside some lamps in town.
+          const urban = URBAN.has(dist);
+          if (urban && !elevated && e.type !== 2) {
+            const f = hash2(Math.round(px), Math.round(pz), 41);
+            if (f < 0.45) {
+              const kind = f < 0.18 ? "bin" : f < 0.3 ? "hydrant" : "bench";
+              const fx = px + tx * 4 + tz * side * 0.4, fz = pz + tz * 4 - tx * side * 0.4;
+              if (shoreDist(fx, fz) > 1 && !this.nearRoad(fx, fz, out, 0.5)) {
+                const fid = out.props.length;
+                out.props.push({ kind, x: fx, z: fz, y: this.height(fx, fz) + 0.15, rot: Math.atan2(tx, tz) + (side > 0 ? Math.PI : 0), id: fid });
+                out.circles.push({ x: fx, z: fz, r: kind === "bench" ? 0.6 : 0.3, kind: "lamp", id: fid, y1: py + 1.2 });
+              }
+            }
+          }
           if (palmy && !elevated && e.type !== 2) {
             const qx = x - tz * (off + 0.2) * side + tx * 16, qz = z + tx * (off + 0.2) * side + tz * 16;
             if (shoreDist(qx, qz) > 1 && !this.nearRoad(qx, qz, out, 1.5)) this.addPalm(out, r, qx, qz);
           }
         }
         if (elevated && e.bridge) out.glows.push({ kind: "amber", x, z, y: y + 0.3, id: -1 });
+      }
+      // Parked cars in the kerbside lane of town streets, clear of the junctions.
+      if (e.type === 0 && URBAN.has(districtAt(p.x, p.z)) && p.y - this.height(p.x, p.z) < 0.4) {
+        for (let s = Math.ceil(p.s / 6.5) * 6.5; s < q.s; s += 6.5) {
+          if (s < e.sA + 12 || s > e.sB - 12) continue;
+          for (const side of [-1, 1]) {
+            const hsh = hash2(Math.round(s * 10), e.id * 2 + (side > 0 ? 1 : 0), 17);
+            if (hsh > 0.34) continue;
+            const t = (s - p.s) / (q.s - p.s || 1);
+            const off = e.hw - 1.3;
+            const x = lerp(p.x, q.x, t) - p.tz * off * side, z = lerp(p.z, q.z, t) + p.tx * off * side;
+            const type = hsh < 0.04 ? 2 : hsh < 0.12 ? 1 : hsh < 0.16 ? 3 : 0;
+            const yaw = Math.atan2(-p.tx * side, -p.tz * side);
+            const y = this.height(x, z);
+            out.parked.push({ x, z, y, yaw, type, color: CAR_COLS[Math.floor(hash2(Math.round(x), Math.round(z), 5) * CAR_COLS.length)] });
+            const hl = [2.3, 1.95, 2.5, 2.65][type], hw = 1.0;
+            const ax = Math.abs(p.tx) > 0.7;
+            out.boxes.push(ax ? { x0: x - hl, z0: z - hw, x1: x + hl, z1: z + hw, y1: y + 1.6 } : { x0: x - hw, z0: z - hl, x1: x + hw, z1: z + hl, y1: y + 1.6 });
+          }
+        }
       }
     }
   }

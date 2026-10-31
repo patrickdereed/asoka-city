@@ -5,6 +5,7 @@ import * as S from "./shaders.js";
 import { Geo, propLamp, propPalm, propTree, propHut, propUmbrella, propCrane } from "./geo.js";
 import { HALF, CHUNK, NCH, HN, HRES, DECK, ST, PAL, NEON, SIGNS, TOWER, shoreDist, districtAt } from "./map.js";
 import { hex, clamp, lerp, hash2 } from "./util.js";
+import { CAR_TYPES, trafficGeometry } from "./cars.js";
 
 // ------------------------------------------------------------------------------- uniforms
 
@@ -13,30 +14,31 @@ export function makeUniforms() {
   return {
     uLightDir: v3(), uLightCol: v3(), uSkyAmb: v3(), uGndAmb: v3(), uFogCol: v3(), uZenith: v3(),
     uSunDir: v3(), uSunGlow: v3(), uMoonDir: v3(), uCam: v3(),
-    uFogDen: { value: 0.0004 }, uNight: { value: 0 }, uTime: { value: 0 },
+    uFogDen: { value: 0.0004 }, uNight: { value: 0 }, uTime: { value: 0 }, uWet: { value: 0 },
+    uShadow: { value: null }, uShadowMat: { value: new THREE.Matrix4() }, uShadowOn: { value: 0 }, uShadowTexel: { value: 1 / 2048 },
   };
 }
 
-// Time-of-day keyframes: hour, zenith, horizon, sun glow, light colour/intensity,
-// sky ambient, ground ambient, fog density, night.
+// Time-of-day keyframes (colours sRGB, converted to linear): hour, zenith, horizon, sun glow,
+// light colour/intensity, sky ambient/intensity, ground ambient/intensity, fog, night, exposure.
 const KEYS = [
-  [0, 0x08161a, 0x1d3a40, 0x1d3a40, 0x8fb0c8, 0.2, 0x2f5560, 0.5, 0x182224, 0.42, 0.00055, 1],
-  [4.6, 0x0b1c22, 0x23424a, 0x2a4850, 0x8fb0c8, 0.18, 0x2f5560, 0.48, 0x182224, 0.4, 0.00055, 1],
-  [5.8, 0x2d4766, 0xc98a7a, 0xff9a6a, 0xffb48a, 0.3, 0x7c8296, 0.55, 0x3a3430, 0.45, 0.0005, 0.55],
-  [6.9, 0x5f93bd, 0xffd2aa, 0xffb070, 0xffd6a8, 0.5, 0x9fb3c0, 0.62, 0x6b6255, 0.5, 0.00042, 0],
-  [9, 0x4d93c9, 0xf6eee2, 0xfff1d6, 0xfff3e0, 0.55, 0xb2c9d6, 0.64, 0x8a8070, 0.55, 0.00034, 0],
-  [12.5, 0x3f8dc8, 0xfff7ee, 0xfffaf0, 0xfffaf0, 0.56, 0xb9d0dc, 0.65, 0x8a8070, 0.56, 0.0003, 0],
-  [16, 0x4a8fc0, 0xfbe9d4, 0xffe6c4, 0xfff0d8, 0.55, 0xa9bfcc, 0.64, 0x7c7366, 0.55, 0.00034, 0],
-  [17.6, 0x4f7fb0, 0xffc596, 0xff9a52, 0xffc68a, 0.55, 0x9aa6b8, 0.6, 0x6e5f52, 0.52, 0.0004, 0],
-  [18.4, 0x3a4f80, 0xff7a3c, 0xff6018, 0xff8a4a, 0.5, 0x8a7d96, 0.56, 0x4a3a36, 0.48, 0.00045, 0.22],
-  [19.1, 0x1f2b4a, 0xb5507a, 0xe0506a, 0xc07090, 0.25, 0x4f4a6a, 0.5, 0x2a2430, 0.44, 0.0005, 0.7],
-  [20.2, 0x0b1a20, 0x24434a, 0x2c4a50, 0x8fb0c8, 0.2, 0x2f5560, 0.5, 0x182224, 0.42, 0.00055, 1],
-  [24, 0x08161a, 0x1d3a40, 0x1d3a40, 0x8fb0c8, 0.2, 0x2f5560, 0.5, 0x182224, 0.42, 0.00055, 1],
+  [0, 0x08161a, 0x1d3a40, 0x1d3a40, 0x8fb0c8, 0.3, 0x2f5560, 0.24, 0x182224, 0.12, 0.00055, 1, 1.7],
+  [4.6, 0x0b1c22, 0x23424a, 0x2a4850, 0x8fb0c8, 0.28, 0x2f5560, 0.24, 0x182224, 0.12, 0.00055, 1, 1.7],
+  [5.8, 0x2d4766, 0xc98a7a, 0xff9a6a, 0xffb48a, 1.0, 0x7c8296, 0.4, 0x3a3430, 0.2, 0.0005, 0.55, 1.1],
+  [6.9, 0x5f93bd, 0xffd2aa, 0xffb070, 0xffd6a8, 2.4, 0x9fb3c0, 0.6, 0x6b6255, 0.3, 0.00042, 0, 0.88],
+  [9, 0x4d93c9, 0xf6eee2, 0xfff1d6, 0xfff3e0, 3.0, 0xb2c9d6, 0.72, 0x8a8070, 0.34, 0.00034, 0, 0.82],
+  [12.5, 0x3f8dc8, 0xfff7ee, 0xfffaf0, 0xfffaf0, 3.1, 0xb9d0dc, 0.75, 0x8a8070, 0.35, 0.0003, 0, 0.8],
+  [16, 0x4a8fc0, 0xfbe9d4, 0xffe6c4, 0xfff0d8, 3.0, 0xa9bfcc, 0.72, 0x7c7366, 0.34, 0.00034, 0, 0.82],
+  [17.6, 0x4f7fb0, 0xffc596, 0xff9a52, 0xffc68a, 2.7, 0x9aa6b8, 0.62, 0x6e5f52, 0.3, 0.0004, 0, 0.86],
+  [18.4, 0x3a4f80, 0xff7a3c, 0xff6018, 0xff8a4a, 2.1, 0x8a7d96, 0.5, 0x4a3a36, 0.24, 0.00045, 0.22, 0.98],
+  [19.1, 0x1f2b4a, 0xb5507a, 0xe0506a, 0xc07090, 0.7, 0x4f4a6a, 0.34, 0x2a2430, 0.16, 0.0005, 0.7, 1.3],
+  [20.2, 0x0b1a20, 0x24434a, 0x2c4a50, 0x8fb0c8, 0.3, 0x2f5560, 0.24, 0x182224, 0.12, 0.00055, 1, 1.7],
+  [24, 0x08161a, 0x1d3a40, 0x1d3a40, 0x8fb0c8, 0.3, 0x2f5560, 0.24, 0x182224, 0.12, 0.00055, 1, 1.7],
 ];
 
 function mixHex(a, b, t, k = 1) {
   const A = hex(a), B = hex(b);
-  return [lerp(A[0], B[0], t) * k, lerp(A[1], B[1], t) * k, lerp(A[2], B[2], t) * k];
+  return [0, 1, 2].map((i) => Math.pow(lerp(A[i], B[i], t), 2.2) * k);
 }
 
 export function applyTimeOfDay(U, hour, fogScale = 1) {
@@ -45,14 +47,17 @@ export function applyTimeOfDay(U, hour, fogScale = 1) {
   const a = KEYS[i], b = KEYS[i + 1];
   const t = clamp((hour - a[0]) / (b[0] - a[0]), 0, 1);
   const s = t * t * (3 - 2 * t);
-  U.uZenith.value.set(...mixHex(a[1], b[1], s));
-  U.uFogCol.value.set(...mixHex(a[2], b[2], s));
-  U.uSunGlow.value.set(...mixHex(a[3], b[3], s));
+  const night = lerp(a[11], b[11], s);
+  const skyK = lerp(1.35, 1.0, night);
+  U.uZenith.value.set(...mixHex(a[1], b[1], s, skyK));
+  U.uFogCol.value.set(...mixHex(a[2], b[2], s, skyK));
+  U.uSunGlow.value.set(...mixHex(a[3], b[3], s, skyK * 1.2));
   U.uLightCol.value.set(...mixHex(a[4], b[4], s, lerp(a[5], b[5], s)));
   U.uSkyAmb.value.set(...mixHex(a[6], b[6], s, lerp(a[7], b[7], s)));
   U.uGndAmb.value.set(...mixHex(a[8], b[8], s, lerp(a[9], b[9], s)));
   U.uFogDen.value = lerp(a[10], b[10], s) * fogScale;
-  U.uNight.value = lerp(a[11], b[11], s);
+  U.uNight.value = night;
+  U.uWet.value = 0.1 + 0.75 * night;
   const ang = ((hour - 6) / 12) * Math.PI;
   const sun = new THREE.Vector3(Math.cos(ang), Math.sin(ang) * 0.95, 0.35).normalize();
   U.uSunDir.value.copy(sun);
@@ -61,6 +66,8 @@ export function applyTimeOfDay(U, hour, fogScale = 1) {
   const ld = sun.y > -0.02 ? sun.clone() : moon.clone();
   ld.y = Math.max(ld.y, 0.12);
   U.uLightDir.value.copy(ld.normalize());
+  U.uShadowOn.value = U._shadowEnabled ? (sun.y > 0 ? clamp(sun.y * 6, 0, 1) : 0.35) : 0;
+  return lerp(a[12], b[12], s);
 }
 
 // ------------------------------------------------------------------------------ materials
@@ -72,7 +79,7 @@ export function makeMaterials(U) {
     slab: mk(S.GROUND_VS, S.GROUND_FS, { vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }),
     road: mk(S.ROAD_VS, S.ROAD_FS, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }),
     build: mk(S.BUILD_VS, S.BUILD_FS, { vertexColors: true }),
-    prop: mk(S.PROP_VS, S.PROP_FS, { vertexColors: true, side: THREE.DoubleSide, uniforms: { ...U, uBrake: { value: 0 }, uLights: { value: 0 } } }),
+    prop: mk(S.PROP_VS, S.PROP_FS, { vertexColors: true, side: THREE.DoubleSide, uniforms: { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 0 } } }),
     glow: mk(S.GLOW_VS, S.GLOW_FS, { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16 }),
   };
   m.road.extensions = { derivatives: true };
@@ -136,12 +143,13 @@ export function makeSignMaterial(U, tex) {
 // ------------------------------------------------------------------------------- glows
 
 const GLOW_KIND = {
-  lamp: { col: [1, 0.78, 0.48], size: 1.5, day: 0, i: 1 },
-  pool: { col: [1, 0.68, 0.36], size: 8.5, day: 0, i: 0.55 },
-  beacon: { col: [1, 0.12, 0.08], size: 2.8, day: 0.65, i: 1.2 },
-  amber: { col: [1, 0.62, 0.22], size: 1.2, day: 0, i: 0.9 },
-  ring: { col: [1, 0.42, 0.16], size: 9, day: 0.15, i: 0.5 },
-  neon: { col: [1, 0.42, 0.18], size: 3.2, day: 0, i: 0.5 },
+  lamp: { col: [1, 0.8, 0.52], size: 1.6, day: 0, i: 3.5 },
+  pool: { col: [1, 0.72, 0.42], size: 9, day: 0, i: 0.8 },
+  beacon: { col: [1, 0.15, 0.1], size: 2.8, day: 0.5, i: 4 },
+  amber: { col: [1, 0.66, 0.3], size: 1.3, day: 0, i: 2.5 },
+  ring: { col: [1, 0.45, 0.2], size: 9, day: 0.12, i: 1.2 },
+  neon: { col: [1, 0.45, 0.2], size: 3.2, day: 0, i: 1.4 },
+  streak: { i: 1.1 },
 };
 
 export function glowGeometry(capacity) {
@@ -151,12 +159,14 @@ export function glowGeometry(capacity) {
   g.setAttribute("iPos", new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3));
   g.setAttribute("iCol", new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
   g.setAttribute("iP", new THREE.InstancedBufferAttribute(new Float32Array(capacity * 4), 4));
+  g.setAttribute("iG", new THREE.InstancedBufferAttribute(new Float32Array(capacity), 1));
   g.instanceCount = 0;
   return g;
 }
 
-export function setGlow(g, i, x, y, z, col, day, size, mode, blink, inten) {
+export function setGlow(g, i, x, y, z, col, day, size, mode, blink, inten, ground = 0) {
   const P = g.attributes.iPos.array, Cc = g.attributes.iCol.array, Q = g.attributes.iP.array;
+  g.attributes.iG.array[i] = ground;
   P[i * 3] = x; P[i * 3 + 1] = y; P[i * 3 + 2] = z;
   Cc[i * 4] = col[0]; Cc[i * 4 + 1] = col[1]; Cc[i * 4 + 2] = col[2]; Cc[i * 4 + 3] = day;
   Q[i * 4] = size; Q[i * 4 + 1] = mode; Q[i * 4 + 2] = blink; Q[i * 4 + 3] = inten;
@@ -323,6 +333,61 @@ function boxWalls(g, x0, z0, x1, z1, y0, y1, gy, col, style, packed, top, roofCo
   }
 }
 
+// Ledges, cornices, awnings, water tanks and antennas: geometry that breaks up the boxes.
+function band(g, x0, z0, x1, z1, y0, y1, out, col, style = 12) {
+  const packed = 0.5;
+  boxWalls(g, x0 - out, z0 - out, x1 + out, z1 + out, y0, y1, y0, col, style, packed, 0, col, 0);
+  g.e.bdata = [style, packed, 0];
+  g.e.uv = [0, 0];
+  g.quad([x0 - out, y0, z0 - out], [x1 + out, y0, z0 - out], [x1 + out, y0, z1 + out], [x0 - out, y0, z1 + out], [col[0] * 0.7, col[1] * 0.7, col[2] * 0.7], [[0, 0], [0, 0], [0, 0], [0, 0]], [0, -1, 0]);
+}
+
+function detailBuilding(g, b, col, packed) {
+  const u = (k) => (b.seed * 9.71 + k * 0.618) % 1;
+  const W = b.x1 - b.x0, D = b.z1 - b.z0, top = b.gy + b.h;
+  const trim = [Math.min(1, col[0] * 1.08 + 0.04), Math.min(1, col[1] * 1.08 + 0.04), Math.min(1, col[2] * 1.06 + 0.04)];
+  if (b.style === ST.DECO || b.style === ST.OFFICE || b.style === ST.HOSP) {
+    if (b.h > 12 && !(b.tiers && b.tiers.length)) band(g, b.x0, b.z0, b.x1, b.z1, top - 0.2, top + 0.9, 0.35, trim);
+    const every = b.style === ST.OFFICE ? 3 : b.style === ST.HOSP ? 4 : 2;
+    for (let f = every; f * 3.6 < b.h - 4; f += every) band(g, b.x0, b.z0, b.x1, b.z1, b.gy + f * 3.6 - 0.12, b.gy + f * 3.6 + 0.18, 0.22, trim);
+    if (b.style !== ST.HOSP) band(g, b.x0, b.z0, b.x1, b.z1, b.gy + 3.3, b.gy + 3.7, 0.3, trim);
+  }
+  if (b.style === ST.DECO && W > 6) {
+    // Striped awnings over the shopfronts on the long faces.
+    const ac = b.neon >= 0 ? hex(NEON[b.neon]) : hex(PAL.orange);
+    const white = hex(0xfff7ee);
+    g.e.bdata = [12, 0.5, 0]; g.e.uv = [0, 0];
+    for (const [z, dz] of [[b.z0, -1], [b.z1, 1]]) {
+      const n = Math.max(2, Math.floor(W / 1.2));
+      for (let k = 0; k < n; k++) {
+        const xa = b.x0 + 0.6 + ((W - 1.2) * k) / n, xb = b.x0 + 0.6 + ((W - 1.2) * (k + 1)) / n;
+        const c = k % 2 ? white : ac;
+        g.quad([xa, b.gy + 3.25, z], [xb, b.gy + 3.25, z], [xb, b.gy + 2.75, z + dz * 1.6], [xa, b.gy + 2.75, z + dz * 1.6], c, null, [0, 0.8, dz]);
+      }
+    }
+  }
+  if (!b.roof && (b.style === ST.DECO || b.style === ST.OFFICE) && b.h > 14 && b.h < 50 && u(7) < 0.45 && W > 10 && D > 10) {
+    // Water tank on legs.
+    const x = lerp(b.x0 + 4, b.x1 - 4, u(8)), z = lerp(b.z0 + 4, b.z1 - 4, u(9));
+    g.e.bdata = [ST.STEEL, 0.5, 0]; g.e.uv = [0, 0];
+    const wood = hex(0x8a6a4c), steel = hex(0x5d6466);
+    for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) g.tube([x + dx, top, z + dz], [x + dx * 0.9, top + 3, z + dz * 0.9], 0.1, 0.1, steel, 4);
+    g.tube([x, top + 3, z], [x, top + 6.2, z], 1.7, 1.7, wood, 10);
+    g.tube([x, top + 6.2, z], [x, top + 7.4, z], 1.8, 0.05, steel, 10);
+  }
+  const tall = b.tiers && b.tiers.length ? b.tiers[b.tiers.length - 1] : null;
+  if (b.style === ST.GLASS && b.h > 70) {
+    const t = tall || b, ty = b.gy + (tall ? tall.y1 : b.h);
+    const cx = (t.x0 + t.x1) / 2, cz = (t.z0 + t.z1) / 2;
+    g.e.bdata = [ST.STEEL, 0.5, 0]; g.e.uv = [0, 0];
+    if (u(3) < 0.5) {
+      g.tube([cx, ty, cz], [cx, ty + 12 + u(4) * 18, cz], 0.5, 0.15, hex(0x9aa3a4), 6);
+    } else {
+      band(g, t.x0 + 1.5, t.z0 + 1.5, t.x1 - 1.5, t.z1 - 1.5, ty, ty + 2.5, 0, hex(0x3c4446), ST.CONC);
+    }
+  }
+}
+
 function buildBuildings(world, data) {
   const g = new Geo({ uv: 2, bdata: 3 });
   for (const b of data.buildings) {
@@ -334,6 +399,7 @@ function buildBuildings(world, data) {
     const top = b.gy + b.h;
     boxWalls(g, b.x0, b.z0, b.x1, b.z1, b.y0, top, b.gy, col, b.style, packed, b.h, roofCol, b.roof);
     for (const t of b.tiers || []) boxWalls(g, t.x0, t.z0, t.x1, t.z1, b.gy + t.y0, b.gy + t.y1, b.gy, col, b.style, packed, t.y1, roofCol, 0);
+    detailBuilding(g, b, col, packed);
     // Rooftop plant on offices and towers.
     if (!b.roof && (b.style === ST.OFFICE || b.style === ST.GLASS || b.style === ST.HOSP) && b.x1 - b.x0 > 14) {
       const tt = b.tiers && b.tiers.length ? b.tiers[b.tiers.length - 1] : { x0: b.x0, z0: b.z0, x1: b.x1, z1: b.z1, y1: b.h };
@@ -387,14 +453,50 @@ function buildFlora(data) {
   return g.count ? g.build() : null;
 }
 
+const carGeos = [];
+function mergeCar(g, p) {
+  if (!carGeos[p.type]) carGeos[p.type] = trafficGeometry(CAR_TYPES[p.type]);
+  const src = carGeos[p.type];
+  const P = src.attributes.position.array, N = src.attributes.normal.array, C = src.attributes.color.array, D = src.attributes.cdata.array;
+  const c = Math.cos(p.yaw), s = Math.sin(p.yaw), col = hex(p.color);
+  for (let i = 0; i < P.length / 3; i++) {
+    const x = P[i * 3], y = P[i * 3 + 1], z = P[i * 3 + 2];
+    g.pos.push(p.x + x * c + z * s, p.y + y, p.z - x * s + z * c);
+    const nx = N[i * 3], nz = N[i * 3 + 2];
+    g.nrm.push(nx * c + nz * s, N[i * 3 + 1], -nx * s + nz * c);
+    const paint = D[i * 2] > 0.5;
+    g.col.push(C[i * 3] * (paint ? col[0] : 1), C[i * 3 + 1] * (paint ? col[1] : 1), C[i * 3 + 2] * (paint ? col[2] : 1));
+    g.ex.cdata.push(paint ? 1 : 0, D[i * 2 + 1] === 2 ? 0 : 0);
+  }
+}
+
+function propFurniture(g, p) {
+  g.e.cdata = [0, 0];
+  if (p.kind === "bin") {
+    g.tube([p.x, p.y, p.z], [p.x, p.y + 0.95, p.z], 0.3, 0.32, hex(0x2f757c), 8);
+    g.tube([p.x, p.y + 0.95, p.z], [p.x, p.y + 1.02, p.z], 0.34, 0.3, hex(0x182b2e), 8);
+  } else if (p.kind === "hydrant") {
+    g.tube([p.x, p.y, p.z], [p.x, p.y + 0.7, p.z], 0.15, 0.15, hex(0xff6018), 6);
+    g.tube([p.x, p.y + 0.7, p.z], [p.x, p.y + 0.85, p.z], 0.15, 0.05, hex(0xff6018), 6);
+    g.box(0, 0.5, 0, 0.5, 0.1, 0.1, hex(0xd8d0c4), p.rot, p.x, p.y, p.z);
+  } else if (p.kind === "bench") {
+    const wood = hex(0xa7957d), iron = hex(0x283f43);
+    g.box(0, 0.45, 0, 1.8, 0.08, 0.5, wood, p.rot, p.x, p.y, p.z);
+    g.box(0, 0.8, 0.22, 1.8, 0.4, 0.06, wood, p.rot, p.x, p.y, p.z);
+    for (const dx of [-0.8, 0.8]) g.box(dx, 0.22, 0, 0.08, 0.45, 0.5, iron, p.rot, p.x, p.y, p.z);
+  }
+}
+
 function buildStreet(data, knocked) {
   const g = new Geo({ cdata: 2 });
   const ranges = new Map();
+  for (const p of data.parked || []) mergeCar(g, p);
   for (const p of data.props) {
     const start = g.count;
     if (p.kind === "lamp") { if (knocked.has(p.id)) continue; propLamp(g, p); }
     else if (p.kind === "hut") propHut(g, p);
     else if (p.kind === "umbrella") propUmbrella(g, p);
+    else if (p.kind === "bin" || p.kind === "hydrant" || p.kind === "bench") propFurniture(g, p);
     else continue;
     ranges.set(p.id, [start, g.count - start]);
   }
@@ -432,22 +534,25 @@ function buildGlows(world, data, knocked) {
     if (o.kind === "lamp" && knocked.has(o.id)) continue;
     const k = GLOW_KIND[o.kind];
     const blink = o.kind === "beacon" ? hash2(Math.round(o.x), Math.round(o.z)) : -1;
-    list.push([o.x, o.y, o.z, k.col, k.day, k.size, 0, blink, k.i, o.id]);
+    const gy = world.ground(o.x, o.z, o.y);
+    list.push([o.x, o.y, o.z, k.col, k.day, k.size, 0, blink, k.i, o.id, gy]);
     if (o.kind === "lamp") {
-      const gy = world.ground(o.x, o.z, o.y);
-      list.push([o.x, gy + 0.12, o.z, GLOW_KIND.pool.col, 0, GLOW_KIND.pool.size, 1, -1, GLOW_KIND.pool.i, o.id]);
+      list.push([o.x, gy + 0.12, o.z, GLOW_KIND.pool.col, 0, GLOW_KIND.pool.size, 1, -1, GLOW_KIND.pool.i, o.id, gy]);
+      list.push([o.x, o.y, o.z, k.col, 0, 2.6, -1, -1, GLOW_KIND.streak.i, o.id, gy]);
     }
   }
   for (const b of data.buildings) {
     if (b.neon < 0 || b.style !== ST.DECO) continue;
     const c = hex(NEON[b.neon]);
-    for (const [x, z] of [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]]) list.push([x, b.gy + b.h - 0.8, z, c, 0, 3.4, 0, -1, 0.45, -1]);
+    for (const [x, z] of [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]]) list.push([x, b.gy + b.h - 0.8, z, c, 0, 3.4, 0, -1, 1.2, -1, b.gy]);
+    const mx = (b.x0 + b.x1) / 2, mz = (b.z0 + b.z1) / 2;
+    list.push([mx, b.gy + 4.1, b.z0 - 0.3, c, 0, 5, -1, -1, 0.8, -1, b.gy]);
   }
   if (!list.length) return null;
   const g = glowGeometry(list.length);
   const ids = new Map();
   list.forEach((o, i) => {
-    setGlow(g, i, o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8]);
+    setGlow(g, i, o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7], o[8], o[10]);
     if (o[9] >= 0) { if (!ids.has(o[9])) ids.set(o[9], []); ids.get(o[9]).push(i); }
   });
   g.instanceCount = list.length;
@@ -485,6 +590,7 @@ export function buildTower(world, mats) {
     return new THREE.Mesh(geo, mats.build);
   };
   group.add(toBuild(new THREE.ExtrudeGeometry(tri, { depth: T.depth, bevelEnabled: false, curveSegments: 48 })));
+  group.children[0].layers.enable(1);
   group.add(toBuild(new THREE.ExtrudeGeometry(disc, { depth: T.depth * 0.8, bevelEnabled: false, curveSegments: 40 }).translate(0, 0, T.depth * 0.1)));
   // Neon rings on both faces, and a glow halo around each.
   const ring = new Geo({ cdata: 2 });
@@ -505,8 +611,8 @@ export function buildTower(world, mats) {
   for (const zf of [T.z - T.depth / 2 - 1, T.z + T.depth / 2 + 1]) {
     for (let i = 0; i < 40; i++) {
       const a = (i / 40) * Math.PI * 2;
-      setGlow(gg, k++, T.x + Math.cos(a) * T.ringR, gy + T.ringY + Math.sin(a) * T.ringR, zf, GLOW_KIND.ring.col, 0.15, 7, 0, -1, 0.35);
-      if (i % 2 === 0) setGlow(gg, k++, T.x + Math.cos(a) * T.coreR, gy + T.ringY + Math.sin(a) * T.coreR, zf, GLOW_KIND.ring.col, 0.15, 6, 0, -1, 0.3);
+      setGlow(gg, k++, T.x + Math.cos(a) * T.ringR, gy + T.ringY + Math.sin(a) * T.ringR, zf, GLOW_KIND.ring.col, 0.15, 7, 0, -1, 1.1);
+      if (i % 2 === 0) setGlow(gg, k++, T.x + Math.cos(a) * T.coreR, gy + T.ringY + Math.sin(a) * T.coreR, zf, GLOW_KIND.ring.col, 0.15, 6, 0, -1, 0.9);
     }
   }
   gg.instanceCount = k;
@@ -540,12 +646,12 @@ export class CityView {
   build(cx, cz) {
     const data = this.w.chunk(cx, cz);
     const group = new THREE.Group();
-    const add = (geo, mat, order = 0) => { if (!geo) return null; const m = new THREE.Mesh(geo, mat); m.renderOrder = order; m.matrixAutoUpdate = false; group.add(m); return m; };
+    const add = (geo, mat, order = 0, cast = false) => { if (!geo) return null; const m = new THREE.Mesh(geo, mat); m.renderOrder = order; m.matrixAutoUpdate = false; if (cast) m.layers.enable(1); group.add(m); return m; };
     add(buildGround(this.w, cx, cz), this.m.ground);
     add(buildSlabs(this.w, data), this.m.slab);
     add(buildRoads(this.w, data), this.m.road);
-    add(buildBuildings(this.w, data), this.m.build);
-    add(buildFlora(data), this.m.prop);
+    add(buildBuildings(this.w, data), this.m.build, 0, true);
+    add(buildFlora(data), this.m.prop, 0, true);
     add(buildSigns(data), this.signMat);
     const glows = buildGlows(this.w, data, this.knockedSet(cx, cz));
     let glowMesh = null;
@@ -559,6 +665,7 @@ export class CityView {
     if (!s) { v.street = { mesh: null, ranges: new Map() }; return; }
     const mesh = new THREE.Mesh(s.geo, this.m.prop);
     mesh.matrixAutoUpdate = false;
+    mesh.layers.enable(1);
     v.group.add(mesh);
     v.street = { mesh, ranges: s.ranges };
   }

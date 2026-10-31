@@ -9,13 +9,15 @@ import { HUD, BigMap, drawMapImage } from "./hud.js";
 import { Input } from "./input.js";
 import { Audio } from "./audio.js";
 import { clamp, lerp, angleWrap, hex } from "./util.js";
+import { Post } from "./post.js";
+import { SunShadow } from "./shadow.js";
 
 THREE.ColorManagement.enabled = false;
 
 const QUALITY = {
-  low: { radius: 4, near: 2.0, ratio: 1, traffic: 22 },
-  medium: { radius: 5, near: 2.4, ratio: 1.25, traffic: 32 },
-  high: { radius: 7, near: 2.8, ratio: 2, traffic: 44 },
+  low: { radius: 4, near: 2.0, ratio: 1, traffic: 22, shadow: 0, msaa: 0, bloom: true },
+  medium: { radius: 5, near: 2.4, ratio: 1.25, traffic: 32, shadow: 2048, msaa: 4, bloom: true },
+  high: { radius: 7, near: 2.8, ratio: 2, traffic: 44, shadow: 4096, msaa: 4, bloom: true },
 };
 const SAVE_KEY = `asokacity.${window.AC_USER || "local"}`;
 
@@ -26,7 +28,7 @@ const savePrefs = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(pr
 prefs.quality = prefs.quality || "medium";
 
 const canvas = $("gl");
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
 renderer.outputColorSpace = THREE.LinearSRGBColorSpace;
 renderer.setClearColor(0x182b2e);
 const scene = new THREE.Scene();
@@ -39,16 +41,19 @@ function resize() {
   renderer.setSize(innerWidth, innerHeight, false);
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
+  if (post) {
+    const v = renderer.getDrawingBufferSize(new THREE.Vector2());
+    post.setSize(v.x, v.y, q.msaa);
+  }
 }
 addEventListener("resize", resize);
-resize();
 
 function setLoading(msg) { loading.classList.remove("hidden"); loading.innerHTML = `<div class="ld"><span class="ld-mark"></span><b>${msg}</b></div>`; }
 const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
 
 const LOGO = `<svg viewBox="0 0 100 90" class="logo" aria-hidden="true"><path d="M50 2 L98 88 L2 88 Z" fill="currentColor"/><circle cx="50" cy="61" r="19" fill="none" stroke="var(--cream)" stroke-width="7"/></svg>`;
 
-let world, U, mats, city, sky, sea, hud, bigmap, input, audio, traffic, player;
+let world, U, mats, city, sky, sea, hud, bigmap, input, audio, traffic, player, post, shadow, exposure = 1;
 let playerMesh, wheels = [], trafficMeshes = [], carGlow, carGlowMesh, shadows;
 let hour = 18.0, time = 0, camMode = 0, camYaw = 0, camPos = new THREE.Vector3(), shake = 0;
 let state = "loading", acc = 0, last = performance.now(), mapOpen = false;
@@ -65,6 +70,7 @@ async function boot() {
   sea = makeSea(U, world); scene.add(sea);
   const signTex = await makeSignTexture();
   city = new CityView(world, scene, mats, makeSignMaterial(U, signTex));
+  post = new Post(renderer);
   applyQuality();
   scene.add(buildTower(world, mats));
   const mapImg = drawMapImage(world);
@@ -79,7 +85,7 @@ async function boot() {
   player = new Vehicle(world, PLAYER_CAR, { knocked: (chunk, c) => city.knock(chunk, c) });
   player.place(SPAWN.x, SPAWN.z, SPAWN.yaw);
   const pmat = mats.prop.clone();
-  pmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 } };
+  pmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 1 } };
   playerMesh = new THREE.Group();
   playerMesh.add(new THREE.Mesh(playerGeometry(), pmat));
   const wg = wheelGeometry(PLAYER_CAR.wr);
@@ -87,18 +93,21 @@ async function boot() {
     const w = new THREE.Mesh(wg, pmat);
     w.position.set(sx * (PLAYER_CAR.W / 2 - 0.12), PLAYER_CAR.wr, sz * (PLAYER_CAR.L / 2 - 0.85));
     w.rotation.order = "YXZ";
+    w.layers.enable(1);
     playerMesh.add(w); wheels.push(w);
   }
+  playerMesh.children[0].layers.enable(1);
   playerMesh.rotation.order = "YXZ";
   scene.add(playerMesh);
 
   // Traffic: one instanced mesh per body type.
   const tmat = mats.prop.clone();
-  tmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 } };
+  tmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 0.75 } };
   for (const t of CAR_TYPES) {
     const im = new THREE.InstancedMesh(trafficGeometry(t), tmat, 64);
     im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(64 * 3), 3);
     im.count = 0; im.frustumCulled = false;
+    im.layers.enable(1);
     scene.add(im); trafficMeshes.push(im);
   }
   carGlow = glowGeometry(600);
@@ -109,7 +118,7 @@ async function boot() {
   scene.add(shadows);
 
   // Build the area around the spawn before showing anything.
-  applyTimeOfDay(U, hour);
+  exposure = applyTimeOfDay(U, hour);
   camPos.set(SPAWN.x, 4, SPAWN.z + 9);
   let pending = 1, guard = 0;
   while (pending > 0 && guard++ < 200) {
@@ -127,6 +136,11 @@ function applyQuality() {
   city.radius = q.radius;
   city.nearR = q.near;
   if (traffic) traffic.max = q.traffic;
+  // Always keep a depth texture bound to the shadow sampler; low detail just never renders it.
+  if (!shadow) shadow = new SunShadow(renderer, U, q.shadow || 256, 170);
+  else shadow.setSize(q.shadow || 256, 170);
+  U.uShadow.value = shadow.rt.depthTexture;
+  U._shadowEnabled = !!q.shadow;
   resize();
 }
 
@@ -329,7 +343,7 @@ function insideBox(x, y, z) {
 
 function render(dt) {
   if (!world) return;
-  applyTimeOfDay(U, hour);
+  exposure = applyTimeOfDay(U, hour);
   U.uTime.value = time;
   updateCamera(dt);
   U.uCam.value.copy(camera.position);
@@ -369,12 +383,18 @@ function render(dt) {
   const lights = (x, y, z, yaw, hl, hw, brake, isPlayer) => {
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
     for (const s of [-1, 1]) {
-      setGlow(carGlow, n++, x + fx * (hl + 0.1) + rx * s * (hw - 0.32), y + 0.68, z + fz * (hl + 0.1) + rz * s * (hw - 0.32), [1, 0.95, 0.82], 0.05, 0.9, 0, -1, 0.9);
-      setGlow(carGlow, n++, x - fx * (hl + 0.1) + rx * s * (hw - 0.3), y + 0.78, z - fz * (hl + 0.1) + rz * s * (hw - 0.3), [1, 0.1, 0.06], brake ? 0.5 : 0.05, brake ? 0.9 : 0.55, 0, -1, brake ? 1.2 : 0.7);
+      const hx = x + fx * (hl + 0.1) + rx * s * (hw - 0.32), hz = z + fz * (hl + 0.1) + rz * s * (hw - 0.32);
+      const tx = x - fx * (hl + 0.1) + rx * s * (hw - 0.3), tz = z - fz * (hl + 0.1) + rz * s * (hw - 0.3);
+      setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.95, 0.82], 0.008, 0.9, 0, -1, 3, y);
+      setGlow(carGlow, n++, tx, y + 0.78, tz, [1, 0.1, 0.06], brake ? 0.3 : 0.015, brake ? 0.9 : 0.55, 0, -1, brake ? 4 : 2, y);
+      if (night > 0.3) {
+        setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.92, 0.75], 0, 1.6, -1, -1, 1.2, y);
+        setGlow(carGlow, n++, tx, y + 0.78, tz, [1, 0.12, 0.06], 0, 1.4, -1, -1, brake ? 1.6 : 0.8, y);
+      }
     }
     if (night > 0.2) {
       const d = isPlayer ? 11 : 8;
-      setGlow(carGlow, n++, x + fx * d, world.ground(x + fx * d, z + fz * d, y + 1) + 0.15, z + fz * d, [1, 0.92, 0.75], 0, isPlayer ? 6 : 4, 1 + 2 * Math.PI + Math.atan2(-fx, fz), -1, isPlayer ? 0.55 : 0.35);
+      setGlow(carGlow, n++, x + fx * d, world.ground(x + fx * d, z + fz * d, y + 1) + 0.15, z + fz * d, [1, 0.92, 0.75], 0, isPlayer ? 6 : 4, 1 + 2 * Math.PI + Math.atan2(-fx, fz), -1, isPlayer ? 1.2 : 0.7, y);
     }
     const sm = new THREE.Matrix4().compose(new THREE.Vector3(x, y + 0.06, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)), new THREE.Vector3(hw * 2.6, 1, hl * 2.3));
     if (sh < 80) shadows.setMatrixAt(sh++, sm);
@@ -391,7 +411,9 @@ function render(dt) {
   shadows.instanceMatrix.needsUpdate = true;
   playerMesh.visible = camMode !== 2 && state !== "title";
 
-  renderer.render(scene, camera);
+  const q = QUALITY[prefs.quality];
+  if (q.shadow && U.uShadowOn.value > 0.01) shadow.update(scene, camera);
+  post.render(scene, camera, time, exposure, q.bloom);
 }
 
 boot().catch((err) => {
@@ -400,4 +422,4 @@ boot().catch((err) => {
 });
 
 // Exposed for the local test page.
-window.__ac = { get world() { return world; }, get player() { return player; }, get traffic() { return traffic; }, get city() { return city; }, setHour: (h) => (hour = h), get renderer() { return renderer; } };
+window.__ac = { scene, get post() { return post; }, get U() { return U; }, get world() { return world; }, get player() { return player; }, get traffic() { return traffic; }, get city() { return city; }, setHour: (h) => (hour = h), get renderer() { return renderer; } };
