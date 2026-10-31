@@ -60,6 +60,42 @@ export function drawMapImage(world) {
   return cv;
 }
 
+// Map icons, shared by the minimap and the full map.
+export const ICONS = {
+  arms: { bg: "#ff6018", fg: "#fffdf9", label: "Breakpoint Arms (weapons)" },
+  mart: { bg: "#2f9e98", fg: "#fffdf9", label: "Deploy Mart (food, first aid)" },
+  threads: { bg: "#cc75a0", fg: "#fffdf9", label: "Sandbox Threads (outfits)" },
+  clinic: { bg: "#fffdf9", fg: "#2f757c", label: "Meridian Clinic (healing)" },
+  home: { bg: "#fff7ee", fg: "#3f7f45", label: "Home for sale" },
+  owned: { bg: "#3f7f45", fg: "#fffdf9", label: "Your home (save)" },
+};
+
+export function drawIcon(g, kind, x, y, r) {
+  const I = ICONS[kind];
+  g.save();
+  g.translate(x, y);
+  g.fillStyle = I.bg; g.strokeStyle = "#182b2e"; g.lineWidth = Math.max(1.5, r * 0.18);
+  g.beginPath(); g.arc(0, 0, r, 0, Math.PI * 2); g.fill(); g.stroke();
+  g.fillStyle = I.fg; g.strokeStyle = I.fg; g.lineWidth = Math.max(1.5, r * 0.16); g.lineCap = "round";
+  const k = r * 0.55;
+  if (kind === "arms") {
+    g.beginPath(); g.arc(0, 0, k * 0.72, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.moveTo(-k, 0); g.lineTo(-k * 0.35, 0); g.moveTo(k, 0); g.lineTo(k * 0.35, 0); g.moveTo(0, -k); g.lineTo(0, -k * 0.35); g.moveTo(0, k); g.lineTo(0, k * 0.35); g.stroke();
+  } else if (kind === "mart") {
+    g.fillRect(-k * 0.75, -k * 0.35, k * 1.5, k * 1.15);
+    g.beginPath(); g.arc(0, -k * 0.35, k * 0.42, Math.PI, 0); g.stroke();
+  } else if (kind === "threads") {
+    g.beginPath(); g.moveTo(-k, -k * 0.45); g.lineTo(-k * 0.45, -k * 0.8); g.lineTo(k * 0.45, -k * 0.8); g.lineTo(k, -k * 0.45); g.lineTo(k * 0.65, -k * 0.1); g.lineTo(k * 0.45, -k * 0.25); g.lineTo(k * 0.45, k * 0.85); g.lineTo(-k * 0.45, k * 0.85); g.lineTo(-k * 0.45, -k * 0.25); g.lineTo(-k * 0.65, -k * 0.1); g.closePath(); g.fill();
+  } else if (kind === "clinic") {
+    g.fillRect(-k * 0.28, -k * 0.85, k * 0.56, k * 1.7); g.fillRect(-k * 0.85, -k * 0.28, k * 1.7, k * 0.56);
+  } else {
+    g.beginPath(); g.moveTo(-k * 0.9, -k * 0.05); g.lineTo(0, -k * 0.9); g.lineTo(k * 0.9, -k * 0.05); g.lineTo(k * 0.65, -k * 0.05); g.lineTo(k * 0.65, k * 0.8); g.lineTo(-k * 0.65, k * 0.8); g.lineTo(-k * 0.65, -k * 0.05); g.closePath(); g.fill();
+  }
+  g.restore();
+}
+
+const iconKind = (v, owned) => (v.kind === "home" ? (owned && owned.includes(v.id) ? "owned" : "home") : v.kind);
+
 const LABELS = [
   ["console", 128, -40], ["uptown", 100, -1650], ["cadence", 100, 1550], ["gardens", -2300, 1650],
   ["park", -2560, -64], ["meridian", -2600, -1650], ["hills", -900, -3350], ["docks", -900, 2850],
@@ -75,15 +111,26 @@ export class HUD {
       <div class="hud-clock"><b id="hd-clock">18:00</b><span id="hd-sky">Golden hour</span></div>
       <div class="hud-mini"><canvas id="hd-mini" width="440" height="440"></canvas><span class="hud-north" id="hd-north">N</span></div>
       <div class="hud-speed"><b id="hd-speed">0</b><span>km/h</span><i id="hd-gear">1</i></div>
+      <div class="hud-stats"><b id="hd-money">$0</b><i id="hd-delta"></i>
+        <div class="hud-bar hp" title="Health"><span id="hd-hp"></span></div><div class="hud-bar ar" title="Armour"><span id="hd-ar"></span></div></div>
+      <div class="hud-weapon" id="hd-weapon"><span id="hd-wkind"></span><b id="hd-wname"></b><i id="hd-ammo"></i></div>
+      <div class="hud-cross" id="hd-cross"><span></span></div>
+      <div class="hud-scope" id="hd-scope"></div>
+      <div class="hud-prompt" id="hd-prompt"></div>
       <div class="hud-toast" id="hd-toast"></div>
-      <div class="hud-help" id="hd-help">W/S drive · A/D steer · Space handbrake · C camera · M map · R reset · [ ] time · Esc pause</div>`;
+      <div class="hud-help" id="hd-help">W/S drive · A/D steer · F get out · E enter · mouse aim and fire · Q weapon · M map · Esc pause</div>`;
     this.el = {
       district: root.querySelector("#hd-district"), dname: root.querySelector("#hd-district b"),
       clock: root.querySelector("#hd-clock"), sky: root.querySelector("#hd-sky"),
       mini: root.querySelector("#hd-mini"), north: root.querySelector("#hd-north"),
       speed: root.querySelector("#hd-speed"), gear: root.querySelector("#hd-gear"),
       toast: root.querySelector("#hd-toast"), help: root.querySelector("#hd-help"),
+      money: root.querySelector("#hd-money"), delta: root.querySelector("#hd-delta"), hp: root.querySelector("#hd-hp"), ar: root.querySelector("#hd-ar"),
+      weapon: root.querySelector("#hd-weapon"), wname: root.querySelector("#hd-wname"), wkind: root.querySelector("#hd-wkind"), ammo: root.querySelector("#hd-ammo"),
+      cross: root.querySelector("#hd-cross"), scope: root.querySelector("#hd-scope"), prompt: root.querySelector("#hd-prompt"),
+      speedBox: root.querySelector(".hud-speed"), miniBox: root.querySelector(".hud-mini"),
     };
+    this.shownMoney = null; this.deltaT = 0;
     this.g = this.el.mini.getContext("2d");
     this.cur = null; this.pending = null; this.pendingT = 0; this.cardT = 0; this.toastT = 0;
     setTimeout(() => this.el.help.classList.add("fade"), 12000);
@@ -93,6 +140,38 @@ export class HUD {
     this.el.toast.textContent = msg;
     this.el.toast.classList.add("on");
     this.toastT = secs;
+  }
+
+  // The player's state: money, health, armour, weapon, crosshair and the action prompt.
+  status(dt, st) {
+    const E = this.el;
+    if (this.shownMoney == null) this.shownMoney = st.money;
+    if (st.money !== this.shownMoney) {
+      const diff = st.money - this.shownMoney;
+      E.delta.textContent = `${diff > 0 ? "+" : "−"}$${Math.abs(diff).toLocaleString("en-US")}`;
+      E.delta.className = diff > 0 ? "up on" : "down on";
+      this.deltaT = 2.2;
+      this.shownMoney = st.money;
+    }
+    if (this.deltaT > 0) { this.deltaT -= dt; if (this.deltaT <= 0) E.delta.classList.remove("on"); }
+    E.money.textContent = `$${Math.round(st.money).toLocaleString("en-US")}`;
+    E.hp.style.width = `${clamp(st.hp, 0, 100)}%`;
+    E.hp.parentNode.classList.toggle("low", st.hp < 30);
+    E.ar.style.width = `${clamp(st.armor, 0, 100)}%`;
+    E.ar.parentNode.classList.toggle("hidden", st.armor <= 0);
+    const w = st.weapon;
+    E.weapon.classList.toggle("hidden", !w);
+    if (w) {
+      E.wname.textContent = w.name; E.wkind.textContent = w.kind;
+      E.ammo.textContent = w.reloading ? "Reloading" : w.mag != null ? `${w.mag} / ${w.ammo}` : "";
+    }
+    E.cross.classList.toggle("on", !!st.cross);
+    E.cross.classList.toggle("hit", !!st.hitT);
+    E.scope.classList.toggle("on", !!st.scope);
+    E.prompt.innerHTML = st.prompt || "";
+    E.prompt.classList.toggle("on", !!st.prompt);
+    E.speedBox.classList.toggle("hidden", !!st.onFoot);
+    E.miniBox.classList.toggle("hidden", !!st.inside);
   }
 
   update(dt, car, camYaw, hour) {
@@ -131,6 +210,25 @@ export class HUD {
     g.imageSmoothingEnabled = true;
     g.drawImage(this.map, 0, 0);
     g.restore();
+    // Shops, gun stores and homes nearby, kept upright.
+    const sc = zoom * 1.6 / M_PER_PX, cs = Math.cos(camYaw), sn = Math.sin(camYaw);
+    for (const v of this.venues || []) {
+      const dx = (v.x - car.x) * sc, dz = (v.z - car.z) * sc;
+      const px = dx * cs - dz * sn, py = dx * sn + dz * cs;
+      const d = Math.hypot(px, py);
+      if (d > R - 14) {
+        if (v.kind !== "arms" || d > R * 3.2) continue;
+        drawIcon(g, iconKind(v, this.owned), R + (px / d) * (R - 16), R + (py / d) * (R - 16), 9);
+        continue;
+      }
+      drawIcon(g, iconKind(v, this.owned), R + px, R + py, 15);
+    }
+    for (const p of this.pickups || []) {
+      const dx = (p.x - car.x) * sc, dz = (p.z - car.z) * sc;
+      if (Math.hypot(dx, dz) > Math.min(R - 10, 60 * sc)) continue;
+      g.fillStyle = "#d7a03d"; g.font = '700 26px "Space Mono", monospace'; g.textAlign = "center"; g.textBaseline = "middle";
+      g.fillText("$", R + dx * cs - dz * sn, R + dx * sn + dz * cs);
+    }
     // Player arrow.
     g.save();
     g.translate(R, R);
@@ -146,11 +244,12 @@ export class HUD {
 export class BigMap {
   constructor(root, world, mapImg) {
     this.root = root; this.w = world; this.img = mapImg;
-    root.innerHTML = `<div class="bigmap-card"><header><b>Asoka City</b><span>8 × 8 km · press M or Esc to close</span></header><canvas width="1024" height="1024"></canvas></div>`;
+    root.innerHTML = `<div class="bigmap-card"><header><b>Asoka City</b><span>8 × 8 km · press M or Esc to close</span></header><canvas width="1024" height="1024"></canvas><ul class="legend"></ul></div>`;
     this.cv = root.querySelector("canvas");
+    this.legend = root.querySelector(".legend");
   }
 
-  draw(car) {
+  draw(car, venues = [], owned = []) {
     const g = this.cv.getContext("2d");
     g.drawImage(this.img, 0, 0);
     g.textAlign = "center"; g.textBaseline = "middle";
@@ -161,6 +260,17 @@ export class BigMap {
       const t = DISTRICTS[k].name.toUpperCase();
       g.strokeText(t, px, py); g.fillText(t, px, py);
     }
+    const counts = {};
+    for (const v of venues) {
+      const k = iconKind(v, owned);
+      counts[k] = (counts[k] || 0) + 1;
+      drawIcon(g, k, (v.x + HALF) / M_PER_PX, (v.z + HALF) / M_PER_PX, 9);
+    }
+    this.legend.innerHTML = Object.keys(ICONS).filter((k) => counts[k]).map((k) => {
+      const c = document.createElement("canvas"); c.width = c.height = 36;
+      drawIcon(c.getContext("2d"), k, 18, 18, 15);
+      return `<li><img src="${c.toDataURL()}" alt=""><span>${ICONS[k].label}</span><b>${counts[k]}</b></li>`;
+    }).join("");
     const px = (car.x + HALF) / M_PER_PX, py = (car.z + HALF) / M_PER_PX;
     g.save(); g.translate(px, py); g.rotate(-car.yaw);
     g.fillStyle = "#ff6018"; g.strokeStyle = "#fffdf9"; g.lineWidth = 3;

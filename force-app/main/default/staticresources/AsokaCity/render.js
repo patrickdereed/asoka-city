@@ -117,7 +117,7 @@ export function makeSea(U, world) {
 export async function makeSignTexture() {
   try { await document.fonts.load('700 120px "Space Grotesk"'); } catch (e) { /* fall back to system font */ }
   const cv = document.createElement("canvas");
-  cv.width = 2048; cv.height = 1024;
+  cv.width = 2048; cv.height = 2048;
   const g = cv.getContext("2d");
   g.fillStyle = "#000"; g.fillRect(0, 0, cv.width, cv.height);
   g.fillStyle = "#fff"; g.textAlign = "center"; g.textBaseline = "middle";
@@ -488,6 +488,41 @@ function propFurniture(g, p) {
   }
 }
 
+// Shopfront on a venue's door face: lit windows, a door, an awning in the brand colour and a
+// board behind the sign. Local frame: +z out of the building, +x along the facade.
+const WINDOW = { arms: 0xffc38a, mart: 0xe9fbff, threads: 0xffd3e6, clinic: 0xe6fffb, home: 0xffd9a8 };
+function storefront(g, v) {
+  const yaw = Math.atan2(v.nx, v.nz), W = Math.abs(v.nx) ? v.z1 - v.z0 : v.x1 - v.x0;
+  const B = (x, y, z, sx, sy, sz, col, e = 0) => { g.e.cdata = [0, e]; g.box(x, y, z, sx, sy, sz, hex(col), yaw, v.door.x, v.gy, v.door.z); };
+  const dark = 0x182b2e, lit = WINDOW[v.kind] || 0xffe0b0;
+  if (v.kind === "home") {
+    B(0, 1.2, 0.05, 1.3, 2.4, 0.12, 0x5a4636);
+    B(0, 1.2, 0.08, 1.5, 2.55, 0.06, 0xefe3d2);
+    B(0.45, 1.15, 0.14, 0.08, 0.08, 0.06, 0xd7a03d);
+    B(0, 0.08, 0.9, 2.4, 0.16, 1.4, 0xd9d2c7);
+    B(1.1, 2.4, 0.15, 0.2, 0.28, 0.12, lit, 4);
+    g.e.cdata = [0, 0];
+    return;
+  }
+  const paneW = Math.max(1.5, W / 2 - 2.2), px = W / 4 + 0.55;
+  for (const sx of [-1, 1]) {
+    B(sx * px, 1.75, 0.05, paneW, 2.5, 0.1, lit, 4);
+    B(sx * px, 0.35, 0.1, paneW + 0.2, 0.7, 0.2, dark);
+    if (v.kind === "arms") for (let k = -paneW / 2 + 0.2; k < paneW / 2; k += 0.4) B(sx * px + k, 1.75, 0.16, 0.05, 2.5, 0.05, 0x3d4a4c);
+  }
+  B(0, 1.25, 0.04, 1.8, 2.5, 0.08, lit, 4);
+  for (const sx of [-1, 1]) B(sx * 1, 1.3, 0.1, 0.16, 2.6, 0.16, dark);
+  B(0, 2.65, 0.1, 2.2, 0.2, 0.16, dark);
+  B(0, 3.25, 0.12, W - 0.4, 0.5, 0.2, dark);
+  const aw = v.kind === "clinic" ? 0x2f757c : v.accent;
+  B(0, 3.55, 0.8, W - 1, 0.14, 1.5, aw);
+  B(0, 3.42, 1.55, W - 1, 0.32, 0.06, aw);
+  B(0, 4.4, 0.18, Math.min(W - 2, 11) + 0.5, 2.1, 0.3, dark);
+  if (v.kind === "clinic") { B(0, 7, 0.2, 2.2, 0.7, 0.2, 0x3fd0c9, 4); B(0, 7, 0.2, 0.7, 2.2, 0.2, 0x3fd0c9, 4); }
+  if (v.kind === "mart") B(W / 2 - 1.4, 2.9, 0.2, 1.1, 0.35, 0.08, 0xff6a2e, 4);
+  g.e.cdata = [0, 0];
+}
+
 function buildStreet(data, knocked) {
   const g = new Geo({ cdata: 2 });
   const ranges = new Map();
@@ -501,6 +536,7 @@ function buildStreet(data, knocked) {
     else continue;
     ranges.set(p.id, [start, g.count - start]);
   }
+  for (const v of data.venues || []) storefront(g, v);
   return g.count ? { geo: g.build(), ranges } : null;
 }
 
@@ -508,11 +544,12 @@ function buildSigns(data) {
   if (!data.signs.length) return null;
   const pos = [], nrm = [], uv = [], col = [];
   for (const s of data.signs) {
-    const nx = -Math.sin(s.rot) * 0, nz = s.rot === 0 ? -1 : 1;
-    const rx = -nz, rz = 0;
+    // Facing direction (-sin rot, -cos rot); rot 0 faces north. Text runs to the reader's right.
+    const nx = -Math.sin(s.rot), nz = -Math.cos(s.rot);
+    const rx = -Math.cos(s.rot), rz = Math.sin(s.rot);
     const c = hex(s.color);
-    const k = s.text, cu = (k % 2) * 0.5, cv = 1 - (Math.floor(k / 2) * 170) / 1024;
-    const u0 = cu + 0.02, u1 = cu + 0.48, v0 = cv - 160 / 1024, v1 = cv - 10 / 1024;
+    const k = s.text, cu = (k % 2) * 0.5, cv = 1 - (Math.floor(k / 2) * 170) / 2048;
+    const u0 = cu + 0.02, u1 = cu + 0.48, v0 = cv - 160 / 2048, v1 = cv - 10 / 2048;
     const hw = s.w / 2, hh = s.h / 2;
     const P = (a, b) => [s.x + rx * a, s.y + b, s.z + rz * a];
     const quad = [[P(-hw, -hh), [u0, v0]], [P(hw, -hh), [u1, v0]], [P(hw, hh), [u1, v1]], [P(-hw, hh), [u0, v1]]];
@@ -548,6 +585,11 @@ function buildGlows(world, data, knocked) {
     for (const [x, z] of [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]]) list.push([x, b.gy + b.h - 0.8, z, c, 0, 3.4, 0, -1, 1.2, -1, b.gy]);
     const mx = (b.x0 + b.x1) / 2, mz = (b.z0 + b.z1) / 2;
     list.push([mx, b.gy + 4.1, b.z0 - 0.3, c, 0, 5, -1, -1, 0.8, -1, b.gy]);
+  }
+  for (const v of data.venues || []) {
+    if (v.sign == null) continue;
+    list.push([v.door.x + v.nx * 1.2, v.gy + 4.4, v.door.z + v.nz * 1.2, hex(v.accent), 0, 6, 0, -1, 0.5, -1, v.gy]);
+    list.push([v.door.x + v.nx * 2.2, v.gy + 0.1, v.door.z + v.nz * 2.2, hex(WINDOW[v.kind] || 0xffe0b0), 0, 3.5, 1, -1, 0.9, -1, v.gy]);
   }
   if (!list.length) return null;
   const g = glowGeometry(list.length);

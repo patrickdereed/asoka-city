@@ -69,6 +69,34 @@ function personMaterials(root, U) {
 }
 
 const X = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0), tq = new THREE.Quaternion(), tq2 = new THREE.Quaternion(), tv = new THREE.Vector3(), tv2 = new THREE.Vector3();
+const _S = new THREE.Vector3(), _E = new THREE.Vector3(), _H = new THREE.Vector3(), _d = new THREE.Vector3(), _p = new THREE.Vector3(), _el = new THREE.Vector3(), _t = new THREE.Vector3();
+const _qa = new THREE.Quaternion(), _qw = new THREE.Quaternion(), _qp = new THREE.Quaternion(), _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();
+
+// Turn a bone so its child direction `from` (world) points along `to` (world).
+function aimBone(bone, from, to) {
+  _qa.setFromUnitVectors(from.normalize(), to.normalize());
+  bone.parent.getWorldQuaternion(_qp);
+  bone.getWorldQuaternion(_qw);
+  _qw.premultiply(_qa);
+  bone.quaternion.copy(_qp.invert().multiply(_qw));
+  bone.updateMatrixWorld(true);
+}
+
+// Two-bone reach: upper arm and forearm so the hand lands on target, the elbow bending toward pole.
+function reach(upper, fore, hand, target, pole) {
+  upper.getWorldPosition(_S); fore.getWorldPosition(_E); hand.getWorldPosition(_H);
+  const a = _S.distanceTo(_E), b = _E.distanceTo(_H);
+  _d.subVectors(target, _S);
+  const d = clamp(_d.length(), Math.abs(a - b) + 1e-3, a + b - 1e-3);
+  _d.normalize();
+  const cosA = clamp((a * a + d * d - b * b) / (2 * a * d), -1, 1), sinA = Math.sqrt(1 - cosA * cosA);
+  _p.copy(pole).addScaledVector(_d, -pole.dot(_d)).normalize();
+  _el.copy(_S).addScaledVector(_d, a * cosA).addScaledVector(_p, a * sinA);
+  aimBone(upper, _v1.subVectors(_E, _S), _v2.subVectors(_el, _S));
+  fore.getWorldPosition(_E); hand.getWorldPosition(_H);
+  _t.copy(_S).addScaledVector(_d, d);
+  aimBone(fore, _v1.subVectors(_H, _E), _v2.subVectors(_t, _E));
+}
 
 // Rotate a bone about an axis given in the person's own frame (the holder's local space).
 function turn(bone, axisLocal, angle, holderQ) {
@@ -101,6 +129,33 @@ export class Person {
     this.mixer = new THREE.AnimationMixer(this.inner);
     this.phase = Math.random() * 6.28;
     this.walkW = 0; this.runW = 0; this.lean = 0; this.dive = 0;
+    this.arms = null;   // optional pose: (person) => ({ w, right, left, poleR, poleL }) in world space
+    this.down = 0;      // 0 standing .. 1 lying flat
+  }
+
+  // World-space shoulders and the body's axes, for posing the arms.
+  frame() {
+    const B = this.bones;
+    const r = B.Bip01_R_UpperArm.getWorldPosition(new THREE.Vector3()), l = B.Bip01_L_UpperArm.getWorldPosition(new THREE.Vector3());
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.holder.quaternion);
+    const right = new THREE.Vector3().subVectors(r, l).normalize();
+    return { r, l, fwd, right, up: new THREE.Vector3(0, 1, 0), chest: r.clone().add(l).multiplyScalar(0.5) };
+  }
+
+  hand(side = "R") { return this.bones[`Bip01_${side}_Hand`].getWorldPosition(new THREE.Vector3()); }
+
+  applyArms() {
+    const pose = this.arms && this.arms(this);
+    if (!pose || pose.w < 0.01) return;
+    const B = this.bones;
+    const sides = [["R", pose.right, pose.poleR]];
+    if (pose.left) sides.push(["L", pose.left, pose.poleL]);
+    for (const [s, target, pole] of sides) {
+      const up = B[`Bip01_${s}_UpperArm`], fo = B[`Bip01_${s}_Forearm`], ha = B[`Bip01_${s}_Hand`];
+      const q0 = up.quaternion.clone(), q1 = fo.quaternion.clone();
+      reach(up, fo, ha, target, pole);
+      if (pose.w < 0.999) { up.quaternion.slerpQuaternions(q0, up.quaternion.clone(), pose.w); fo.quaternion.slerpQuaternions(q1, fo.quaternion.clone(), pose.w); up.updateMatrixWorld(true); }
+    }
   }
 
   async init() {
@@ -160,8 +215,12 @@ export class Person {
     this.runW = lerp(this.runW, run, Math.min(1, dt * 4));
     const stride = lerp(1.45, 2.6, this.runW);
     this.phase += ((speed / stride) * Math.PI * 2) * dt;
+    if (this.down > 0) return;
     this.mixer.update(dt);
-    if (this.walkW < 0.01 && this.dive <= 0) return;
+    if (this.walkW < 0.01 && this.dive <= 0) {
+      if (this.arms) { this.holder.updateMatrixWorld(true); this.applyArms(); }
+      return;
+    }
     this.holder.updateMatrixWorld(true);
     const B = this.bones, w = this.walkW, r = this.runW, ph = this.phase, L = this.L;
     const hq = this.holder.quaternion;
@@ -188,6 +247,7 @@ export class Person {
       const k = Math.sin(Math.min(1, this.dive) * Math.PI);
       this.inner.position.y += 0.25 * k;
     }
+    if (this.arms) { this.holder.updateMatrixWorld(true); this.applyArms(); }
   }
 }
 
@@ -233,6 +293,8 @@ export class Crowd {
       const ped = { person, e, s: p.s, walkSide: side * dir, dir, x: tmp.x, z: tmp.z, y: this.w.height(tmp.x, tmp.z) + 0.15,
         yaw: Math.atan2(-tmp.tx * dir, -tmp.tz * dir), speed: standing ? 0 : r.range(1.1, 1.55), cruise: 0, standing, flee: 0, fleeX: 0, fleeZ: 0 };
       ped.cruise = ped.speed;
+      ped.hp = 100; ped.panic = 0; ped.downT = 0;
+      if (!standing) { person.walkW = 1; person.runW = 0; }
       if (standing) {
         ped.yaw = Math.atan2(-tmp.tz * side, tmp.tx * side) + r.range(-0.5, 0.5);
         const g = person.info.g;
@@ -253,18 +315,56 @@ export class Crowd {
     ped.e = e; ped.dir = dir; ped.s = dir > 0 ? e.sA : e.sB;
   }
 
+  // Shot, hit or caught in a blast: knocked down at zero health, otherwise running.
+  hurt(p, dmg, fx, fz) {
+    if (p.downT) return false;
+    p.hp -= dmg;
+    if (p.hp <= 0) {
+      p.downT = 0.001; p.fallYaw = Math.atan2(p.x - fx, p.z - fz);
+      if (this.onDown) this.onDown(p);
+      this.alarm(p.x, p.z, 30, fx, fz);
+      return true;
+    }
+    this.alarm(p.x, p.z, 6, fx, fz);
+    return false;
+  }
+
+  // Everyone near a threat runs away from it along their pavement.
+  alarm(x, z, radius, fx, fz) {
+    for (const p of this.people) {
+      if (p.downT || Math.hypot(p.x - x, p.z - z) > radius) continue;
+      p.panic = 7 + this.r() * 6;
+      p.standing = false;
+      this.w.edgePoint(p.e, p.s, 0, tmp);
+      const away = (p.x - fx) * tmp.tx + (p.z - fz) * tmp.tz;
+      const side = p.walkSide * p.dir;
+      p.dir = away >= 0 ? 1 : -1;
+      p.walkSide = side * p.dir;
+    }
+  }
+
   update(dt, cam, car, walker) {
     if (!this.spawning && this.people.length < this.max) {
       this.spawning = true;
       this.spawnOne(cam).finally(() => { this.spawning = false; });
     }
     this.people = this.people.filter((p) => {
-      if (Math.hypot(p.x - cam.x, p.z - cam.z) < 150) return true;
+      if (Math.hypot(p.x - cam.x, p.z - cam.z) < 150 && !(p.downT > 40)) return true;
       this.scene.remove(p.person.holder);
       return false;
     });
     const carSpeed = car ? Math.hypot(car.vx, car.vz) : 0;
     for (const p of this.people) {
+      if (p.downT) {
+        // Knocked down: topple over, then lie still.
+        p.downT += dt;
+        const k = Math.min(1, p.downT / 0.55);
+        p.person.down = Math.max(0.001, k * k);
+        p.person.holder.rotation.order = "YXZ";
+        p.person.holder.rotation.set(-p.person.down * Math.PI / 2, p.fallYaw + Math.PI, 0);
+        p.person.holder.position.set(p.x, p.y + 0.12 * p.person.down, p.z);
+        continue;
+      }
       // Cars coming at you: get out of the way.
       if (car && carSpeed > 3 && !p.flee) {
         const dx = p.x - car.x, dz = p.z - car.z, d = Math.hypot(dx, dz);
@@ -288,7 +388,8 @@ export class Crowd {
         speed = 3.5 * k; run = 1;
         if (p.flee === 0) { p.person.dive = 0; this.rejoin(p); }
       } else if (!p.standing) {
-        p.s += p.speed * dt * p.dir;
+        if (p.panic > 0) { p.panic -= dt; speed = 4.3; run = 1; } else speed = p.speed;
+        p.s += speed * dt * p.dir;
         const end = p.dir > 0 ? p.e.sB : p.e.sA;
         if ((p.dir > 0 && p.s >= end) || (p.dir < 0 && p.s <= end)) this.nextEdge(p);
         this.w.edgePoint(p.e, p.s, (p.e.hw + 2.4) * p.walkSide * p.dir, tmp);

@@ -41,6 +41,24 @@ for (let cz = 0; cz < NCH; cz++) for (let cx = 0; cx < NCH; cx++) {
 }
 ok(overlaps === 0, `buildings overlapping roads: ${overlaps}`);
 
+// Venues: enough of each, every door on open pavement, every one built in its chunk.
+const kinds = {};
+for (const v of w.venues) kinds[v.kind] = (kinds[v.kind] || 0) + 1;
+console.log("venues", JSON.stringify(kinds), "cash envelopes", w.pickups.length);
+ok(kinds.arms >= 25 && kinds.mart >= 15 && kinds.threads >= 6 && kinds.home >= 10 && kinds.clinic >= 5, "gun stores, shops, clinics and homes planned");
+let blocked = 0, missing = 0;
+for (const v of w.venues) {
+  const c = w.chunk(Math.floor((v.x0 + 4096) / 256), Math.floor((v.z0 + 4096) / 256));
+  if (!c.venues.includes(v)) missing++;
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const cc = w.chunk(Math.floor((v.x + 4096) / 256) + dx, Math.floor((v.z + 4096) / 256) + dz);
+    if (cc.boxes.some((b) => v.x > b.x0 - 0.3 && v.x < b.x1 + 0.3 && v.z > b.z0 - 0.3 && v.z < b.z1 + 0.3)) { blocked++; dx = dz = 9; }
+  }
+}
+ok(missing === 0, `every venue is built (${missing} missing)`);
+ok(blocked === 0, `every door is on open pavement (${blocked} blocked)`);
+ok(w.pickups.length >= 60, "cash envelopes placed");
+
 const w2 = new World(7);
 ok(w2.edges.length === w.edges.length && w2.chunk(16, 15).buildings.length === w.chunk(16, 15).buildings.length, "same seed, same world");
 

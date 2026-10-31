@@ -326,7 +326,8 @@ void main() {
   if (vE > .5) {
     if (vE < 1.5) col = mix(col, vec3(4., 3.8, 3.2), clamp(.15 + uNight + uLights, 0., 1.));
     else if (vE < 2.5) col = vec3(.9, .03, .02) * (.4 + 4. * max(uNight * .5, uBrake));
-    else col = vCol * (.6 + 9. * uNight);
+    else if (vE < 3.5) col = vCol * (.6 + 9. * uNight);
+    else col = vCol * (1.1 + 1.1 * uNight);
   }
   gl_FragColor = vec4(fog(col, vW), 1.);
 }`;
@@ -520,6 +521,60 @@ void main() {
   col += alb * uSkyAmb * pow(1. - max(dot(n, V), 0.), 3.) * .35;
   col += alb * uLightCol * max(dot(n, uLightDir) * .5 + .5, 0.) * .08 * uSkin * sh;
   gl_FragColor = vec4(fog(col, vW), 1.);
+}`;
+
+// Rooms you walk into: vertex colours lit by up to eight point lights. cdata.y: 4 glows, 5 is a window
+// onto the sky with a skyline, 6 is a screen.
+export const ROOM_VS = /* glsl */ `
+attribute vec2 cdata;
+varying vec3 vW; varying vec3 vN; varying vec3 vCol; varying float vE;
+void main() {
+  vec4 lp = vec4(position, 1.);
+  vec3 ln = normal;
+  #ifdef USE_INSTANCING
+    lp = instanceMatrix * lp; ln = mat3(instanceMatrix) * ln;
+  #endif
+  vec4 wp = modelMatrix * lp;
+  vW = wp.xyz; vN = normalize(mat3(modelMatrix) * ln); vCol = pow(color, vec3(2.2)); vE = cdata.y;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+
+export const ROOM_FS = /* glsl */ `
+uniform vec4 uPL[8]; uniform vec3 uPC[8]; uniform vec3 uRoomAmb; uniform vec3 uCam; uniform float uTime;
+uniform vec3 uZenith; uniform vec3 uFogCol; uniform float uNight;
+varying vec3 vW; varying vec3 vN; varying vec3 vCol; varying float vE;
+float h1(float n) { return fract(sin(n * 127.1) * 43758.5453); }
+void main() {
+  vec3 n = normalize(vN);
+  if (!gl_FrontFacing) n = -n;
+  vec3 V = normalize(uCam - vW);
+  vec3 lit = uRoomAmb * 2.4 * (.6 + .4 * (n.y * .5 + .5));
+  vec3 spec = vec3(0.);
+  for (int i = 0; i < 8; i++) {
+    vec3 L = uPL[i].xyz - vW;
+    float d = length(L);
+    float att = pow(max(1. - d / max(uPL[i].w, .01), 0.), 2.);
+    vec3 l = L / max(d, 1e-3);
+    lit += uPC[i] * max(dot(n, l), 0.) * att;
+    spec += uPC[i] * pow(max(dot(reflect(-l, n), V), 0.), 40.) * att * .25;
+  }
+  vec3 col = vCol * lit + spec * (n.y > .9 ? .8 : .3);
+  if (vE > 3.5 && vE < 4.5) col = vCol * 2.4;
+  else if (vE > 4.5 && vE < 5.5) {
+    // A window: sky down to a skyline of towers, lit at night.
+    float a = vW.x + vW.z, y = vW.y;
+    float b = floor(a * .9);
+    float top = 1.2 + h1(b) * 1.6 + step(.8, h1(b + 7.)) * 1.2;
+    vec3 sky = mix(uFogCol, uZenith, clamp((y - 1.) / 3., 0., 1.)) * 1.1;
+    vec3 tower = mix(vec3(.05, .08, .09), uFogCol * .45, .5);
+    float win = step(.55, h1(floor(a * 7.) + floor(y * 6.) * 13.)) * step(.4, fract(a * 7.)) * step(.35, fract(y * 6.));
+    tower += win * vec3(1., .7, .4) * uNight * 1.5;
+    col = y < top ? tower : sky;
+  } else if (vE > 5.5) {
+    float f = .7 + .3 * sin(uTime * 3. + vW.x * 4.) * sin(uTime * 1.7);
+    col = vCol * 1.8 * f;
+  }
+  gl_FragColor = vec4(col, 1.);
 }`;
 
 export const DEPTH_FS = /* glsl */ `void main() { gl_FragColor = vec4(1.); }`;

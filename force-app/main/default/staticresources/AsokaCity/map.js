@@ -103,7 +103,8 @@ const HOUSEC = [0xfff7ee, 0xf3e6d3, 0xf6c6a6, 0xcbd3c4, 0xd3e0e1, 0xe0a08f, 0xef
 export const NEON = [0xff6a2e, 0xff6a2e, 0x3fd0c9, 0xffc667, 0xcc75a0, 0xfffdf9];
 const URBAN = new Set(["console", "uptown", "cadence", "sandbox", "scratch", "preview", "gardens"]);
 const CAR_COLS = [0xfff7ee, 0xcdbba2, 0x2f757c, 0x507fa7, 0xb8544f, 0xd7a03d, 0xa4517b, 0x8a8073, 0xfffdf9, 0x283f43, 0x5d8f5e, 0xe9e4da];
-export const SIGNS = ["ASOKA", "GO-LIVE", "INSTINCTS", "THE CONSOLE", "SANDBOX ISLES", "MERIDIAN HEALTH", "PIPELINE FREIGHT", "COMMIT ROW", "CADENCE", "GUIDELINE HILLS", "SYSENG", "READY TO PROMOTE"];
+export const SIGNS = ["ASOKA", "GO-LIVE", "INSTINCTS", "THE CONSOLE", "SANDBOX ISLES", "MERIDIAN HEALTH", "PIPELINE FREIGHT", "COMMIT ROW", "CADENCE", "GUIDELINE HILLS", "SYSENG", "READY TO PROMOTE",
+  "BREAKPOINT ARMS", "DEPLOY MART", "SANDBOX THREADS", "MERIDIAN CLINIC"];
 
 // Building styles understood by the building shader.
 export const ST = { GLASS: 0, DECO: 1, OFFICE: 2, HOUSE: 3, WARE: 4, BOX: 5, HOSP: 6, LOGO: 7, VILLA: 8, CONC: 9, NEON: 10, STEEL: 11 };
@@ -174,6 +175,8 @@ export class World {
     this.buildPolylineRoads();
     this.buildGrid();
     this.finishGraph();
+    this.planVenues();
+    this.planPickups();
   }
 
   // Height of the terrain mesh, interpolated exactly the way its triangles are.
@@ -555,7 +558,7 @@ export class World {
     const r = rng(hash2(cx, cz, this.seed) * 4294967296);
     const out = {
       cx, cz, x0, z0, buildings: [], slabs: [], props: [], glows: [], signs: [], parked: [],
-      boxes: [], circles: [], segs: this.chunkSegs[cx + cz * NCH], tower: null,
+      boxes: [], circles: [], segs: this.chunkSegs[cx + cz * NCH], tower: null, venues: [],
       nodes: this.chunkNodes[cx + cz * NCH],
     };
     const natural = [];
@@ -634,7 +637,9 @@ export class World {
 
     const gen = BLOCKS[dist] || BLOCKS.uptown;
     const ok = gen.call(this, { out, r, i, j, ix0, ix1, iz0, iz1, lx0, lx1, lz0, lz1, sides, slab, coastal, dist, cxm, czm });
-    return ok !== false;
+    const v = this.venueAt.get(i * 100 + j);
+    if (v) this.placeVenue(out, v, r);
+    return ok !== false || !!v;
   }
 
   genRoadside(out, r) {
@@ -668,7 +673,7 @@ export class World {
             if (f < 0.45) {
               const kind = f < 0.18 ? "bin" : f < 0.3 ? "hydrant" : "bench";
               const fx = px + tx * 4 + tz * side * 0.4, fz = pz + tz * 4 - tx * side * 0.4;
-              if (shoreDist(fx, fz) > 1 && !this.nearRoad(fx, fz, out, 0.5)) {
+              if (shoreDist(fx, fz) > 1 && !this.nearRoad(fx, fz, out, 0.5) && !out.venues.some((v) => Math.hypot(v.x - fx, v.z - fz) < 5)) {
                 const fid = out.props.length;
                 out.props.push({ kind, x: fx, z: fz, y: this.height(fx, fz) + 0.15, rot: Math.atan2(tx, tz) + (side > 0 ? Math.PI : 0), id: fid });
                 out.circles.push({ x: fx, z: fz, r: kind === "bench" ? 0.6 : 0.3, kind: "lamp", id: fid, y1: py + 1.2 });
@@ -785,6 +790,116 @@ export class World {
           out.props.push({ kind: "umbrella", x, z, y: this.height(x, z), rot: 0, tone: r(), id: out.props.length });
         }
       }
+    }
+  }
+
+  // ---------------------------------------------------------------------------- venues
+
+  // Gun stores, corner shops, clothes shops, clinics and homes for sale are planned from the road
+  // graph before any chunk exists, so the map can show every one; genBlock then builds each.
+  planVenues() {
+    const cands = [];
+    for (let j = 1; j < NG - 1; j++) for (let i = 1; i < NG - 1; i++) {
+      const cxm = -HALF + i * GRID + GRID / 2, czm = -HALF + j * GRID + GRID / 2;
+      const dist = districtAt(cxm, czm);
+      if (dist === "hills" || dist === "park" || shoreDist(cxm, czm) < -20) continue;
+      if (cxm > PLAZA.x0 && cxm < PLAZA.x1 && czm > PLAZA.z0 && czm < PLAZA.z1) continue;
+      const sides = [0, 1, 2, 3].map((s) => this.sideRoad(i, j, s));
+      if (!sides.some(Boolean)) continue;
+      cands.push({ i, j, dist, sides, k: hash2(i, j, this.seed * 31 + 5) });
+    }
+    cands.sort((a, b) => a.k - b.k);
+    this.venues = [];
+    this.venueAt = new Map();
+    for (const kind of ["clinic", "home", "threads", "arms", "mart"]) {
+      const K = VENUE_KINDS[kind];
+      let n = 0;
+      for (const c of cands) {
+        if (n >= K.count) break;
+        if (this.venueAt.has(c.i * 100 + c.j)) continue;
+        const spec = kind === "home" ? HOMES[c.dist] : K.districts.includes(c.dist) ? K : null;
+        if (!spec) continue;
+        const v = this.fitVenue(c, kind, spec);
+        if (!v || this.venues.some((o) => Math.hypot(o.x - v.x, o.z - v.z) < (o.kind === kind ? K.spacing : 170))) continue;
+        this.venues.push(v);
+        this.venueAt.set(c.i * 100 + c.j, v);
+        n++;
+      }
+    }
+  }
+
+  // Footprint against the middle of one road-facing side of a block, door on the pavement.
+  fitVenue(c, kind, spec) {
+    const { i, j, sides } = c;
+    const x0 = -HALF + i * GRID, z0 = -HALF + j * GRID;
+    const hwOf = (s) => (sides[s] ? sides[s].hw + 0.3 : 2);
+    const walk = 4.5;
+    const lx0 = x0 + hwOf(0) + (sides[0] ? walk : 0), lx1 = x0 + GRID - hwOf(1) - (sides[1] ? walk : 0);
+    const lz0 = z0 + hwOf(2) + (sides[2] ? walk : 0), lz1 = z0 + GRID - hwOf(3) - (sides[3] ? walk : 0);
+    const order = [0, 1, 2, 3].sort((a, b) => hash2(i * 4 + a, j, 9) - hash2(i * 4 + b, j, 9));
+    for (const s of order) {
+      const e = sides[s];
+      if (!e || e.type === 2 || e.bridge) continue;
+      const W = spec.w, D = spec.d;
+      let fx0, fz0, fx1, fz1, nx = 0, nz = 0;
+      if (s >= 2) {
+        const m = (lx0 + lx1) / 2; fx0 = m - W / 2; fx1 = m + W / 2;
+        if (s === 2) { fz0 = lz0; fz1 = lz0 + D; nz = -1; } else { fz1 = lz1; fz0 = lz1 - D; nz = 1; }
+      } else {
+        const m = (lz0 + lz1) / 2; fz0 = m - W / 2; fz1 = m + W / 2;
+        if (s === 0) { fx0 = lx0; fx1 = lx0 + D; nx = -1; } else { fx1 = lx1; fx0 = lx1 - D; nx = 1; }
+      }
+      if (W > (s >= 2 ? lx1 - lx0 : lz1 - lz0) - 8 || D > (s >= 2 ? lz1 - lz0 : lx1 - lx0) / 2) continue;
+      const land = this.landOK(fx0, fz0, fx1, fz1, 3);
+      if (!land) continue;
+      const dx = nx ? (nx < 0 ? fx0 : fx1) : (fx0 + fx1) / 2, dz = nz ? (nz < 0 ? fz0 : fz1) : (fz0 + fz1) / 2;
+      const sx = dx + nx * 2.3, sz = dz + nz * 2.3;
+      if (shoreDist(sx, sz) < 2 || Math.abs(this.height(sx, sz) - land.hi) > 1.2) continue;
+      const K = VENUE_KINDS[kind];
+      return {
+        id: `${kind}-${i}-${j}`, kind, i, j, dist: c.dist, x0: fx0, z0: fz0, x1: fx1, z1: fz1, nx, nz,
+        door: { x: dx, z: dz }, x: sx, z: sz, gy: land.hi + 0.1, yawOut: Math.atan2(-nx, -nz),
+        name: spec.name || K.name, h: spec.h, style: spec.style, color: spec.color, roof: spec.roof || 0,
+        accent: K.accent, sign: K.sign, tier: spec.tier || kind, price: spec.price || 0,
+      };
+    }
+    return null;
+  }
+
+  placeVenue(out, v, r) {
+    const hit = (a, pad) => a.x1 > v.x0 - pad && a.x0 < v.x1 + pad && a.z1 > v.z0 - pad && a.z0 < v.z1 + pad;
+    const inside = (x, z, pad) => x > v.x0 - pad && x < v.x1 + pad && z > v.z0 - pad && z < v.z1 + pad;
+    out.buildings = out.buildings.filter((b) => !hit(b, 1.5));
+    out.boxes = out.boxes.filter((b) => !hit(b, 1.5));
+    // Props keep their ids (lamps are knocked over by id), so cleared ones are only marked.
+    for (const p of out.props) if (inside(p.x, p.z, 3) && p.kind !== "lamp") p.kind = "gone";
+    out.circles = out.circles.filter((c) => c.kind === "lamp" || !inside(c.x, c.z, 3));
+    out.signs = out.signs.filter((s) => !inside(s.x, s.z, 2));
+    out.glows = out.glows.filter((g) => g.kind === "lamp" || !inside(g.x, g.z, 2));
+    const b = { x0: v.x0, z0: v.z0, x1: v.x1, z1: v.z1, h: v.h, style: v.style, color: v.color, seed: r(), roof: v.roof, neon: -1, venue: v };
+    if (!this.addBuilding(out, b)) return;
+    out.venues.push(v);
+    if (v.sign != null) {
+      const W = Math.abs(v.nx) ? v.z1 - v.z0 : v.x1 - v.x0;
+      out.signs.push({ x: v.door.x + v.nx * 0.5, z: v.door.z + v.nz * 0.5, y: b.gy + 4.4, w: Math.min(W - 2, 11), h: 1.6, rot: Math.atan2(-v.nx, -v.nz), text: v.sign, color: v.accent });
+    }
+  }
+
+  // Cash on the pavements: envelopes of unclaimed expenses, worth collecting.
+  planPickups() {
+    this.pickups = [];
+    const r = rng(this.seed * 104729 + 3);
+    const main = this.edges.filter((e) => e.main && e.type !== 2 && !e.bridge && e.len > 60);
+    for (let tries = 0; this.pickups.length < 90 && tries < 4000; tries++) {
+      const e = main[Math.floor(r() * main.length)];
+      const s = r.range(e.sA + 20, e.sB - 20), side = r() < 0.5 ? -1 : 1;
+      const p = this.edgePoint(e, s, (e.hw + 2.6) * side);
+      const d = districtAt(p.x, p.z);
+      if (shoreDist(p.x, p.z) < 3 || Math.abs(p.y - this.height(p.x, p.z)) > 0.5) continue;
+      if (this.pickups.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 300)) continue;
+      if (this.venues.some((v) => Math.hypot(v.x - p.x, v.z - p.z) < 12)) continue;
+      const value = d === "hills" || d === "park" ? r.int(8, 30) * 50 : r.int(2, 16) * 50;
+      this.pickups.push({ id: this.pickups.length, x: p.x, z: p.z, y: this.height(p.x, p.z) + 0.15, value });
     }
   }
 
@@ -981,6 +1096,27 @@ const BLOCKS = {
 BLOCKS.scratch = BLOCKS.isles;
 BLOCKS.sandbox = BLOCKS.isles;
 BLOCKS.preview = BLOCKS.isles;
+
+const TOWN = ["console", "uptown", "cadence", "gardens", "docks", "meridian", "sandbox", "scratch", "preview"];
+export const VENUE_KINDS = {
+  arms:    { name: "Breakpoint Arms", sign: 12, count: 30, spacing: 460, w: 14, d: 16, h: 7, style: ST.DECO, color: 0x283f43, accent: 0xff6018, districts: TOWN },
+  mart:    { name: "Deploy Mart", sign: 13, count: 24, spacing: 560, w: 14, d: 15, h: 6.5, style: ST.DECO, color: 0xfff7ee, accent: 0x3fd0c9, districts: TOWN },
+  threads: { name: "Sandbox Threads", sign: 14, count: 10, spacing: 900, w: 16, d: 16, h: 9, style: ST.DECO, color: 0xf6c6a6, accent: 0xcc75a0, districts: ["console", "uptown", "cadence", "sandbox", "scratch", "preview"] },
+  clinic:  { name: "Meridian Clinic", sign: 15, count: 8, spacing: 1400, w: 16, d: 16, h: 10, style: ST.HOSP, color: 0xfffdf9, accent: 0x3fd0c9, districts: TOWN },
+  home:    { name: "Home", count: 16, spacing: 600, accent: 0x9fd08a },
+};
+// Homes for sale by district: what you get and what it costs.
+export const HOMES = {
+  gardens:  { tier: "bungalow", name: "Sprint Gardens bungalow", price: 12000, w: 14, d: 12, h: 6.5, style: ST.HOUSE, roof: 1, color: 0xf3e6d3 },
+  meridian: { tier: "studio", name: "Meridian Heights flat", price: 15000, w: 12, d: 14, h: 12, style: ST.DECO, color: 0xd3e0e1 },
+  cadence:  { tier: "studio", name: "Cadence Quarter studio", price: 18000, w: 12, d: 14, h: 11, style: ST.DECO, color: 0xf6c6a6 },
+  docks:    { tier: "loft", name: "Pipeline warehouse loft", price: 26000, w: 18, d: 16, h: 9, style: ST.WARE, color: 0xb8544f },
+  uptown:   { tier: "loft", name: "Commit Row loft", price: 38000, w: 16, d: 16, h: 18, style: ST.OFFICE, color: 0xcdbba2 },
+  preview:  { tier: "condo", name: "Preview Point beach condo", price: 60000, w: 16, d: 16, h: 14, style: ST.DECO, color: 0xfbe7d8 },
+  sandbox:  { tier: "condo", name: "Sandbox Isles beach condo", price: 65000, w: 16, d: 16, h: 14, style: ST.DECO, color: 0xffe9dc },
+  scratch:  { tier: "condo", name: "Scratch Key beach condo", price: 70000, w: 16, d: 16, h: 14, style: ST.DECO, color: 0xf5d7b0 },
+  console:  { tier: "penthouse", name: "Console penthouse", price: 150000, w: 18, d: 18, h: 64, style: ST.GLASS, color: 0x365155 },
+};
 
 // ---------------------------------------------------------------------------- helpers
 

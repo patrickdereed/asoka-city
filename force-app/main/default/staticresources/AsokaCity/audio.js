@@ -83,4 +83,52 @@ export class Audio {
       this.hornO = null;
     }
   }
+
+  // A burst of filtered noise with a pitched thump: the shape of a gunshot.
+  burst(vol, lp, len, thump = 0, start = 0) {
+    if (!this.ctx) return;
+    const c = this.ctx, t = c.currentTime + start;
+    const s = c.createBufferSource(); s.buffer = this.noise;
+    const f = c.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = lp;
+    const g = c.createGain();
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    s.connect(f); f.connect(g); g.connect(this.master);
+    s.start(t, Math.random() * 1.5); s.stop(t + len + 0.05);
+    if (thump) {
+      const o = c.createOscillator(); o.type = "sine";
+      o.frequency.setValueAtTime(thump, t); o.frequency.exponentialRampToValueAtTime(thump * 0.35, t + len * 0.6);
+      const og = c.createGain(); og.gain.setValueAtTime(vol * 0.9, t); og.gain.exponentialRampToValueAtTime(0.001, t + len * 0.7);
+      o.connect(og); og.connect(this.master); o.start(t); o.stop(t + len);
+    }
+  }
+
+  shot(cls) {
+    const P = {
+      pistol: [0.55, 3200, 0.16, 140], revolver: [0.8, 2400, 0.3, 110], smg: [0.4, 3600, 0.1, 150],
+      shotgun: [0.9, 1800, 0.38, 80], rifle: [0.6, 3000, 0.18, 120], sniper: [0.95, 2200, 0.55, 70],
+      lmg: [0.6, 2600, 0.16, 110], minigun: [0.32, 3400, 0.07, 160], launcher: [0.5, 900, 0.3, 90], rocket: [0.6, 700, 0.6, 60],
+    }[cls] || [0.5, 3000, 0.15, 130];
+    this.burst(P[0], P[1] * (0.9 + Math.random() * 0.2), P[2], P[3]);
+  }
+
+  swing(hit) { this.burst(hit ? 0.5 : 0.18, hit ? 700 : 2500, hit ? 0.18 : 0.12, hit ? 90 : 0); }
+  launch(kind) { this.burst(kind === "rocket" ? 0.6 : 0.3, kind === "rocket" ? 1200 : 500, kind === "rocket" ? 0.7 : 0.2, 70); }
+  boom(power = 1) { this.burst(Math.min(1, 0.9 * power), 420, 1.6, 55); this.burst(0.35, 160, 2.4, 0, 0.05); }
+  click() { this.blip(1800, 0.04, 0.12, "square"); }
+  reload() { this.blip(900, 0.05, 0.12, "square"); this.blip(1300, 0.05, 0.12, "square", 0.35); }
+
+  blip(freq, len, vol = 0.1, type = "triangle", start = 0) {
+    if (!this.ctx) return;
+    const c = this.ctx, t = c.currentTime + start;
+    const o = c.createOscillator(); o.type = type; o.frequency.value = freq;
+    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    o.connect(g); g.connect(this.master); o.start(t); o.stop(t + len + 0.02);
+  }
+
+  // Money in and out: a rising or falling two-note chime.
+  cash(up = true) {
+    this.blip(up ? 880 : 660, 0.12, 0.12);
+    this.blip(up ? 1320 : 440, 0.18, 0.12, "triangle", 0.08);
+  }
 }
+

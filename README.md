@@ -3,8 +3,29 @@
 An open-world driving game set in an original, Asoka-themed 8 × 8 km city, delivered as a
 Visualforce tab. The whole city is generated from a seed in code, so the bundle is under 400 KB.
 
-**Stage 1 (this build): free roam.** The city, driving, traffic, day and night, minimap and map.
-Walking, the Audit patrols, missions and the 25-hour main story come in later stages.
+**This build: free roam with an economy.** The city, driving, traffic, day and night, walking, money,
+weapons, and buildings you walk into. The Audit patrols, missions and the 25-hour main story come next.
+
+## Money, shops, weapons and homes
+
+You start with $2,500. Ninety envelopes of unclaimed expenses lie on the pavements (more out in the hills
+and the park); the story missions will be the main income. Everything you own is saved in the browser.
+
+| Place | How many | What it's for |
+|---|---|---|
+| Breakpoint Arms | 30 | 19 weapons in 7 classes, ammunition, body armour |
+| Deploy Mart | 24 | Food and first aid; scratch cards |
+| Sandbox Threads | 10 | All 31 looks for sale; a mirror to try them on |
+| Meridian Clinic | 8 | Healing; you wake at the nearest one if you're knocked out |
+| Homes for sale | 16 | $12,000 bungalows to a $150,000 penthouse; the bed saves and passes the night, the wardrobe holds your outfits |
+
+All of them are on the map (M) and the minimap. Walk up to a door and press E. Interiors are built in
+`interiors.js`; venues are planned in `map.js` (`planVenues`), so every one is placed deterministically.
+
+The arsenal (`weapons.js`) runs from a bat to a rotary minigun: pistols, SMGs, shotguns, rifles, scoped
+rifles, a light machine gun, grenade and rocket launchers, and grenades. Click the city to look with the
+mouse; right button aims over the shoulder, left fires, Q or the wheel changes weapon, R reloads. People
+hit hard enough are knocked down (no blood); everyone nearby runs. Cars can be disabled and set alight.
 
 ## The city
 
@@ -39,6 +60,8 @@ create your character: a name, man / woman / non-binary, the pronouns the story 
   - `render.js`, `shaders.js`, `geo.js`, `cars.js`: meshes, the procedural look, streaming
   - `vehicle.js`, `traffic.js`: car physics and ambient traffic
   - `main.js`, `hud.js`, `input.js`, `audio.js`: game loop, HUD, controls, synthesised sound
+  - `weapons.js`, `arsenal.js`, `combat.js`: the arsenal, holding and firing, hit tests and explosions
+  - `interiors.js`, `shops.js`: the rooms you walk into and what the shops sell
 - `pages/AsokaCity.page`, `tabs/AsokaCity.tab-meta.xml`, `permissionsets/Asoka_City`: packaging. No Apex; the game reads no Salesforce data.
 
 ## Run and test

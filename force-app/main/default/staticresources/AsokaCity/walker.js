@@ -1,16 +1,17 @@
-// The player on foot: walks and jogs, turns with A/D, bumps off buildings, props and cars,
-// and stops at the water's edge.
-import { clamp, lerp } from "./util.js";
+// The player on foot: walks and jogs relative to the camera, bumps off buildings, props and cars,
+// stops at the water's edge, and inside a room keeps to its walls and furniture.
+import { clamp, lerp, angleWrap } from "./util.js";
 import { HALF, CHUNK, NCH } from "./map.js";
 import { sat } from "./vehicle.js";
 
-const R = 0.35;
+const R = 0.35, R0 = 0.3;
 
 export class Walker {
   constructor(world) {
     this.w = world;
     this.x = 0; this.y = 0; this.z = 0; this.yaw = 0;
     this.speed = 0; this.run = 0; this.person = null;
+    this.room = null;   // { W, D, boxes, ox, oy, oz } while indoors
   }
 
   place(x, z, yaw) {
@@ -21,21 +22,46 @@ export class Walker {
 
   get fwdSpeed() { return this.speed; }
 
+  // inp: { mx, mz } a world-space direction scaled 0..1, run, and face: a yaw to hold (aiming) or null.
   step(dt, inp, obstacles) {
-    this.yaw -= inp.turn * (2.4 - this.run * 0.6) * dt;
-    const want = inp.move * (inp.run ? 5.4 : 1.65);
+    const mag = Math.min(1, Math.hypot(inp.mx, inp.mz));
+    const aiming = inp.face != null;
+    if (aiming) this.yaw += angleWrap(inp.face - this.yaw) * Math.min(1, dt * 16);
+    else if (mag > 0.05) this.yaw += angleWrap(Math.atan2(-inp.mx, -inp.mz) - this.yaw) * Math.min(1, dt * 10);
+    const want = mag * (inp.run && !aiming ? 5.4 : aiming ? 1.4 : 1.65) * (this.room ? 0.85 : 1);
     this.speed += clamp(want - this.speed, -10 * dt, 6 * dt);
-    this.run = lerp(this.run, inp.run && inp.move > 0 ? 1 : 0, Math.min(1, dt * 5));
-    const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
+    this.run = lerp(this.run, inp.run && !aiming && mag > 0.3 ? 1 : 0, Math.min(1, dt * 5));
+    const dx = mag > 0.05 ? inp.mx / mag : 0, dz = mag > 0.05 ? inp.mz / mag : 0;
+    // Facing forward this is the gait's speed; walking backwards while aiming it still animates.
     const ox = this.x, oz = this.z;
-    this.x = clamp(this.x + fx * this.speed * dt, -HALF + 60, HALF - 60);
-    this.z = clamp(this.z + fz * this.speed * dt, -HALF + 60, HALF - 60);
+    this.x += dx * this.speed * dt;
+    this.z += dz * this.speed * dt;
+    if (this.room) { this.collideRoom(); return; }
+    this.x = clamp(this.x, -HALF + 60, HALF - 60);
+    this.z = clamp(this.z, -HALF + 60, HALF - 60);
     this.collide(obstacles);
     // No walking into the sea or off a bridge.
     const g = this.w.ground(this.x, this.z, this.y + 1);
     if ((!this.w.onDeck && g < 0.05) || g - this.y > 0.9 || this.y - g > 3) {
       this.x = ox; this.z = oz;
     } else this.y = lerp(this.y, g + (this.w.onDeck ? 0 : 0.15), Math.min(1, dt * 12));
+  }
+
+  collideRoom() {
+    const R = this.room;
+    let lx = this.x - R.ox, lz = this.z - R.oz;
+    for (const o of R.boxes) {
+      const px = clamp(lx, o.x0, o.x1), pz = clamp(lz, o.z0, o.z1);
+      const dx = lx - px, dz = lz - pz, d = Math.hypot(dx, dz);
+      if (d < R0 && d > 1e-4) { lx = px + (dx / d) * R0; lz = pz + (dz / d) * R0; }
+      else if (d <= 1e-4) {
+        const e = [lx - o.x0, o.x1 - lx, lz - o.z0, o.z1 - lz], k = e.indexOf(Math.min(...e));
+        if (k === 0) lx = o.x0 - R0; else if (k === 1) lx = o.x1 + R0; else if (k === 2) lz = o.z0 - R0; else lz = o.z1 + R0;
+      }
+    }
+    lx = clamp(lx, -R.W / 2 + R0, R.W / 2 - R0);
+    lz = clamp(lz, -R.D + R0, -0.25);
+    this.x = lx + R.ox; this.z = lz + R.oz; this.y = R.oy;
   }
 
   collide(obstacles) {
