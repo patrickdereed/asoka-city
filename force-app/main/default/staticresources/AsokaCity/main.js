@@ -20,6 +20,7 @@ import { Arsenal } from "./arsenal.js";
 import { interiorFor } from "./interiors.js";
 import { openShop, lookName } from "./shops.js";
 import { WEAPON, weaponGeometry, fmtMoney } from "./weapons.js";
+import { dress, styleOf, SKIN_TONES, EYE_COLOURS, HAIR_COLOURS, HAIR_STYLES, hairName, SLIDERS, SPOTS, TATTOOS } from "./looks.js";
 
 THREE.ColorManagement.enabled = false;
 
@@ -313,10 +314,12 @@ function resume() { ui.classList.add("hidden"); state = "play"; last = performan
 
 const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 
-// The lead character: identity and pronouns are the player's choice and are independent of the look.
+// The lead character: identity and pronouns are the player's choice and are independent of the look. Their
+// own features (hair, skin, eyes, nose, ears, tattoos) go on top of whichever look they wear.
 async function setCharacter(lookId) {
   const p = await Person.create(lookId, U);
   if (!p) return;
+  await dress(p, prefs.character && prefs.character.style);
   const parent = me && me.holder.parent;
   const vis = me ? me.holder.visible : false;
   if (me) me.holder.removeFromParent();
@@ -328,6 +331,9 @@ async function setCharacter(lookId) {
 }
 
 // First time: every look is free to pick. Afterwards the look list is your wardrobe; Sandbox Threads sells the rest.
+// Hair, skin, face and tattoos can be changed any time from here.
+const CREATOR_TABS = [["you", "You"], ["look", "Look & skin"], ["hair", "Hair"], ["face", "Face"], ["ink", "Tattoos"]];
+let creatorTab = "you", creatorZoom = 0;
 function showCreator(fromPause = false) {
   state = "creator";
   creatorSpin = 0;
@@ -335,28 +341,89 @@ function showCreator(fromPause = false) {
   $("hud").classList.add("hidden");
   const first = !prefs.character;
   const c = prefs.character || { name: window.AC_NAME || "Alex", identity: "man", pronouns: "he/him", look: (PEOPLE.find((p) => p.g === "m") || PEOPLE[0]).id };
+  const style = styleOf(c.style);
   const looks = first ? PEOPLE : PEOPLE.filter((p) => save.outfits.includes(p.id));
   creatorLook = Math.max(0, looks.findIndex((p) => p.id === (save.look || c.look)));
+  const swatches = (key, list, natural) => `<div class="swatches" role="radiogroup" data-key="${key}">
+      <button class="sw natural" data-v="" aria-label="${natural}" title="${natural}"></button>
+      ${list.map(([n, h]) => `<button class="sw" data-v="${h}" style="--c:${h}" aria-label="${n}" title="${n}"></button>`).join("")}
+    </div>`;
   ui.innerHTML = `
     <div class="creator">
-      <div class="title-card small">
+      <div class="title-card small creator-card">
         ${LOGO}
         <h2>Your character</h2>
-        <label class="field">Name<input id="c-name" maxlength="24" value="${esc(c.name)}" autocomplete="off"></label>
-        <fieldset class="seg"><legend>I am</legend>
-          ${[["man", "A man"], ["woman", "A woman"], ["nonbinary", "Non-binary"]].map(([v, l]) => `<label><input type="radio" name="c-id" value="${v}" ${c.identity === v ? "checked" : ""}><span>${l}</span></label>`).join("")}
-        </fieldset>
-        <label class="field">Pronouns the story uses<select id="c-pro">${["he/him", "she/her", "they/them"].map((v) => `<option ${c.pronouns === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
-        <div class="look"><button class="btn" id="c-prev" aria-label="Previous look">‹</button><span id="c-look"></span><button class="btn" id="c-next" aria-label="Next look">›</button></div>
-        <p class="fine">${first ? "Every look is open to everyone, whoever you are. Drag to turn around." : "These are the looks you own. Sandbox Threads sells the rest."}</p>
+        <nav class="ctabs" role="tablist">${CREATOR_TABS.map(([k, l]) => `<button role="tab" data-tab="${k}">${l}</button>`).join("")}</nav>
+        <section data-tab="you">
+          <label class="field">Name<input id="c-name" maxlength="24" value="${esc(c.name)}" autocomplete="off"></label>
+          <fieldset class="seg"><legend>I am</legend>
+            ${[["man", "A man"], ["woman", "A woman"], ["nonbinary", "Non-binary"]].map(([v, l]) => `<label><input type="radio" name="c-id" value="${v}" ${c.identity === v ? "checked" : ""}><span>${l}</span></label>`).join("")}
+          </fieldset>
+          <label class="field">Pronouns the story uses<select id="c-pro">${["he/him", "she/her", "they/them"].map((v) => `<option ${c.pronouns === v ? "selected" : ""}>${v}</option>`).join("")}</select></label>
+        </section>
+        <section data-tab="look">
+          <p class="lbl">Look</p>
+          <div class="look"><button class="btn" id="c-prev" aria-label="Previous look">‹</button><span id="c-look"></span><button class="btn" id="c-next" aria-label="Next look">›</button></div>
+          <p class="fine">${first ? "Every look is open to everyone, whoever you are." : "These are the looks you own. Sandbox Threads sells the rest."}</p>
+          <p class="lbl">Skin tone</p>
+          ${swatches("skin", SKIN_TONES.map((h, i) => [`Tone ${i + 1}`, h]), "This look's own skin tone")}
+        </section>
+        <section data-tab="hair">
+          <p class="lbl">Style</p>
+          <div class="look"><button class="btn" id="h-prev" aria-label="Previous hair style">‹</button><span id="h-name"></span><button class="btn" id="h-next" aria-label="Next hair style">›</button></div>
+          <p class="lbl">Colour</p>
+          ${swatches("hairCol", HAIR_COLOURS, "Natural colour")}
+          <p class="fine">The colour also goes on your brows.</p>
+        </section>
+        <section data-tab="face">
+          <p class="lbl">Eye colour</p>
+          ${swatches("eyeCol", EYE_COLOURS, "This look's own eye colour")}
+          ${SLIDERS.map(([k, l]) => `<label class="slider"><span>${l}</span><input type="range" min="-1" max="1" step="0.05" data-key="${k}" value="${style[k]}"></label>`).join("")}
+          <button class="btn mini" id="f-reset">Reset face</button>
+        </section>
+        <section data-tab="ink">
+          <div class="seg"><label><input type="radio" name="ink-col" value="0" ${style.inkCol ? "" : "checked"}><span>Black ink</span></label><label><input type="radio" name="ink-col" value="1" ${style.inkCol ? "checked" : ""}><span>Colour</span></label></div>
+          <div class="ink-list">${SPOTS.map((sp) => `<label class="ink-row"><span>${sp.name}<small data-spot="${sp.id}"></small></span><select data-spot="${sp.id}"><option value="">None</option>${TATTOOS.map((t) => `<option value="${t.id}" ${style.ink[sp.id] === t.id ? "selected" : ""}>${t.name}</option>`).join("")}</select></label>`).join("")}</div>
+          <p class="fine">Tattoos show on bare skin, so some outfits cover them.</p>
+        </section>
+        <p class="fine">Drag to turn around.</p>
         <button class="btn primary" id="c-go">${fromPause ? "Done" : "Start in Asoka City"}</button>
       </div>
     </div>`;
   ui.classList.remove("hidden");
+  const setTab = (k) => {
+    creatorTab = k;
+    ui.querySelectorAll(".ctabs button").forEach((b) => b.setAttribute("aria-selected", b.dataset.tab === k));
+    ui.querySelectorAll(".creator-card section").forEach((sec) => { sec.hidden = sec.dataset.tab !== k; });
+  };
+  ui.querySelectorAll(".ctabs button").forEach((b) => b.onclick = () => setTab(b.dataset.tab));
+  setTab(first ? "you" : creatorTab);
+  // Every change restyles the character in place.
+  let busy = Promise.resolve();
+  const restyle = () => {
+    const snap = styleOf(style);
+    busy = busy.then(() => dress(me, snap)).then((rep) => {
+      ui.querySelectorAll(".ink-row small").forEach((el) => { el.textContent = rep && rep.covered.includes(el.dataset.spot) ? " · covered by this outfit" : ""; });
+    }).catch((e) => console.warn("restyle", e));
+  };
+  const markSwatches = () => ui.querySelectorAll(".swatches").forEach((g) => g.querySelectorAll(".sw").forEach((b) => b.setAttribute("aria-checked", (style[g.dataset.key] || "") === b.dataset.v)));
+  ui.querySelectorAll(".swatches").forEach((g) => g.querySelectorAll(".sw").forEach((b) => b.onclick = () => { style[g.dataset.key] = b.dataset.v || null; markSwatches(); restyle(); }));
+  markSwatches();
+  let slideT = null;
+  ui.querySelectorAll(".slider input").forEach((r) => r.oninput = () => { style[r.dataset.key] = parseFloat(r.value); clearTimeout(slideT); slideT = setTimeout(restyle, 40); });
+  $("f-reset").onclick = () => { for (const [k] of SLIDERS) style[k] = 0; style.eyeCol = null; ui.querySelectorAll(".slider input").forEach((r) => { r.value = 0; }); markSwatches(); restyle(); };
+  const showHair = () => { $("h-name").textContent = `${hairName(style.hair)} · ${HAIR_STYLES.indexOf(style.hair) + 1} of ${HAIR_STYLES.length}`; };
+  const stepHair = (d) => { const i = Math.max(0, HAIR_STYLES.indexOf(style.hair)); style.hair = HAIR_STYLES[(i + d + HAIR_STYLES.length) % HAIR_STYLES.length]; showHair(); restyle(); };
+  $("h-prev").onclick = () => stepHair(-1);
+  $("h-next").onclick = () => stepHair(1);
+  showHair();
+  ui.querySelectorAll('input[name="ink-col"]').forEach((r) => r.onchange = () => { style.inkCol = r.value === "1"; restyle(); });
+  ui.querySelectorAll(".ink-list select").forEach((sel) => sel.onchange = () => { if (sel.value) style.ink[sel.dataset.spot] = sel.value; else delete style.ink[sel.dataset.spot]; restyle(); });
   const showLook = () => {
     const p = looks[creatorLook];
     $("c-look").textContent = `${lookName(p, PEOPLE.indexOf(p))} · ${creatorLook + 1} of ${looks.length}`;
-    setCharacter(p.id).then(() => { if (me) me.holder.visible = true; });
+    if (prefs.character) prefs.character.style = styleOf(style);
+    busy = busy.then(() => setCharacter(p.id)).then(() => { if (me) me.holder.visible = true; restyle(); });
   };
   document.querySelectorAll('input[name="c-id"]').forEach((r) => r.onchange = () => { $("c-pro").value = PRONOUNS[r.value]; });
   $("c-prev").onclick = () => { creatorLook = (creatorLook + looks.length - 1) % looks.length; showLook(); };
@@ -364,7 +431,7 @@ function showCreator(fromPause = false) {
   $("c-go").onclick = () => {
     const identity = document.querySelector('input[name="c-id"]:checked').value;
     const look = looks[creatorLook].id;
-    prefs.character = { name: $("c-name").value.trim() || "Alex", identity, pronouns: $("c-pro").value, look };
+    prefs.character = { name: $("c-name").value.trim() || "Alex", identity, pronouns: $("c-pro").value, look, style: styleOf(style) };
     save.look = look;
     if (!save.outfits.includes(look)) save.outfits.push(look);
     savePrefs();
@@ -373,7 +440,8 @@ function showCreator(fromPause = false) {
     showTitle();
     $("t-start").click();
   };
-  showLook();
+  if (first || !me || me.id !== looks[creatorLook].id) showLook();
+  else { me.holder.visible = true; restyle(); }
 }
 
 const CREATOR_SPOT = { x: PLAZA.cx, z: PLAZA.z1 - 40 };
@@ -638,6 +706,7 @@ function loop(now) {
   } else if (state === "creator") {
     time += dt;
     if (drag == null) creatorSpin *= 1 - Math.min(1, dt * 1.5);
+    creatorZoom += ((creatorTab === "hair" || creatorTab === "face" ? 1 : 0) - creatorZoom) * Math.min(1, dt * 5);
     if (me) {
       me.holder.position.set(CREATOR_SPOT.x, world.height(CREATOR_SPOT.x, CREATOR_SPOT.z) + 0.15, CREATOR_SPOT.z);
       // Face the camera (which sits 1.2 m right and 3.6 m south of the spot).
@@ -787,15 +856,19 @@ function discover(at) {
 
 function updateCamera(dt) {
   const p = player;
+  // The creator's close-up sits well inside the usual near plane.
+  camera.near = state === "creator" ? 0.05 : 0.8;
   if (camHold) {
     camera.position.set(...camHold.pos); camera.lookAt(...camHold.look);
     camera.fov = 50; camera.updateProjectionMatrix();
     return;
   }
   if (state === "creator") {
-    const gy = world.height(CREATOR_SPOT.x, CREATOR_SPOT.z);
-    camera.position.set(CREATOR_SPOT.x + 1.2, gy + 1.65, CREATOR_SPOT.z + 3.6);
-    camera.lookAt(CREATOR_SPOT.x - 0.5, gy + 1.15, CREATOR_SPOT.z);
+    // Whole body, or a close-up of the head for hair and face.
+    const gy = world.height(CREATOR_SPOT.x, CREATOR_SPOT.z) + 0.15, hy = gy + (me ? me.height : 1.6) + 0.11, z = creatorZoom;
+    const dx = 0.316, dz = 0.949;
+    camera.position.set(lerp(CREATOR_SPOT.x + 1.2, CREATOR_SPOT.x + dx * 0.75, z), lerp(gy + 1.5, hy + 0.03, z), lerp(CREATOR_SPOT.z + 3.6, CREATOR_SPOT.z + dz * 0.75, z));
+    camera.lookAt(lerp(CREATOR_SPOT.x - 0.5, CREATOR_SPOT.x - 0.949 * 0.2, z), lerp(gy + 1.0, hy - 0.01, z), lerp(CREATOR_SPOT.z, CREATOR_SPOT.z + 0.316 * 0.2, z));
     camera.fov = 45; camera.updateProjectionMatrix();
     return;
   }
@@ -1073,4 +1146,5 @@ window.__ac = {
   get world() { return world; }, get player() { return player; }, get traffic() { return traffic; }, get city() { return city; }, setHour: (h) => (hour = h), get renderer() { return renderer; },
   save, get arsenal() { return arsenal; }, get combat() { return combat; }, get inside() { return inside; }, enterVenue: (v) => enterVenue(v), leaveVenue: () => leaveVenue(), showShop: (k) => showShop(k), closeShop: () => closeShop(),
   setCam: (yaw, pitch) => { camYaw = yaw; camPitch = pitch; }, get state() { return state; }, holdCam: (h) => { camHold = h; },
+  showCreator: (p) => showCreator(p), dress: (s) => dress(me, s), get prefs() { return prefs; },
 };

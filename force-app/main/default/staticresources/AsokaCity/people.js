@@ -59,7 +59,7 @@ function personMaterials(root, U) {
     if (!cache.has(m)) {
       const kind = m.name;
       cache.set(m, new THREE.ShaderMaterial({
-        uniforms: { ...U, uMap: { value: m.map }, uAlphaCut: { value: kind === "hair" ? 0.5 : kind === "glasses" ? 0.3 : 0 }, uSkin: { value: kind === "head" ? 1 : 0.4 } },
+        uniforms: { ...U, uMap: { value: m.map }, uAlphaCut: { value: kind === "hair" ? 0.5 : kind === "glasses" ? 0.3 : 0 }, uSkin: { value: kind === "head" ? 1 : 0.4 }, uSoft: { value: 0 } },
         vertexShader: PERSON_VS, fragmentShader: PERSON_FS,
         side: kind === "hair" || kind === "glasses" ? THREE.DoubleSide : THREE.FrontSide,
       }));

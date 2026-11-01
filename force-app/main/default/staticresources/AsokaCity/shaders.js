@@ -506,13 +506,15 @@ void main() {
 
 export const PERSON_FS = /* glsl */ `
 ${COMMON}
-uniform sampler2D uMap; uniform float uAlphaCut; uniform float uSkin;
+uniform sampler2D uMap; uniform float uAlphaCut; uniform float uSkin; uniform float uSoft;
 varying vec3 vW; varying vec3 vN; varying vec2 vUv;
 void main() {
   vec4 t = texture2D(uMap, vUv);
   if (t.a < uAlphaCut) discard;
   vec3 n = normalize(vN);
   if (!gl_FrontFacing) n = -n;
+  // Hair cards: lean the normal upward so light hair doesn't show the cards' facets.
+  n = normalize(mix(n, vec3(0., 1., 0.), uSoft));
   float sh = shadowAt(vW, n);
   vec3 alb = lin(t.rgb);
   vec3 col = alb * light(n, sh);

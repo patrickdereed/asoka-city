@@ -77,6 +77,20 @@ converted with `tools/convert-people.html` and 11 business avatars shared with D
 create your character: a name, man / woman / non-binary, the pronouns the story uses, and any of the
 31 looks. Press F to get out of the car and walk (Shift to jog), F again by the car to drive.
 
+Your own features go on top of whichever look you wear, and can be changed any time from the pause menu
+(Change your character). `looks.js` bakes them into the player's own copies of the avatar's geometry and
+textures, in the rig's bind pose, using the Rocketbox facial bones and skin weights to find each feature:
+
+| Tab | What you can change |
+|---|---|
+| Look & skin | the look (outfit and face), and 10 skin tones from very light to deep |
+| Hair | 30 styles (the look's own, buzz cut, shaved, or any other avatar's hair fitted to your skull); 16 colours, which also dye the brows |
+| Face | 7 eye colours; eye size and tilt; nose size, length and width; ear size and how far they stick out |
+| Tattoos | 12 original designs (Asoka mark, anchor, swallow, rose, nautical star, heart & banner, dagger, wave, `{ }`, lightning, compass, arm band) on 11 spots, in black or colour; they show on bare skin only, so some outfits cover them |
+
+Avatar textures are decoded twice on the way to the screen (sRGB texture, then the shader's own gamma), so
+swatch colours go in through the inverse to look right in game.
+
 ## Layout
 
 - `force-app/main/default/staticresources/AsokaCity/`: the game, as ES modules
@@ -86,6 +100,7 @@ create your character: a name, man / woman / non-binary, the pronouns the story 
   - `main.js`, `hud.js`, `input.js`, `audio.js`: game loop, HUD, controls, synthesised sound
   - `weapons.js`, `arsenal.js`, `combat.js`: the arsenal, holding and firing, hit tests and explosions
   - `interiors.js`, `shops.js`: the rooms you walk into and what the shops sell
+  - `people.js`, `looks.js`: the Rocketbox crowd and your character's hair, skin, eyes, nose, ears and tattoos
 - `pages/AsokaCity.page`, `tabs/AsokaCity.tab-meta.xml`, `permissionsets/Asoka_City`: packaging. No Apex; the game reads no Salesforce data.
 
 ## Run and test

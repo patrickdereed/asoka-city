@@ -91,6 +91,26 @@ kbd { font: 700 12px "Space Mono", monospace; padding: 2px 6px; margin-right: 4p
 .look { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; }
 .look span { text-align: center; font: 400 13px "Space Mono", monospace; color: var(--spruce-100); }
 .look .btn { padding: 8px 16px; font-size: 20px; }
+.creator-card { max-height: 92vh; overflow-y: auto; padding-right: 6px; gap: 12px; }
+.creator-card section { display: grid; gap: 10px; }
+.creator-card section[hidden] { display: none; }
+.ctabs { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctabs button { font: 600 13px "Space Grotesk", sans-serif; padding: 7px 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255, 253, 249, 0.06); color: var(--cream-50); cursor: pointer; }
+.ctabs button[aria-selected="true"] { background: var(--orange-bg); color: var(--spruce-900); border-color: var(--orange); }
+.ctabs button:focus-visible, .sw:focus-visible { outline: 2px solid var(--cream); outline-offset: 2px; }
+.lbl { margin: 4px 0 0; font-size: 13px; color: var(--spruce-100); }
+.swatches { display: flex; flex-wrap: wrap; gap: 7px; }
+.sw { width: 30px; height: 30px; border-radius: 50%; border: 2px solid rgba(255, 253, 249, 0.25); background: var(--c); cursor: pointer; padding: 0; }
+.sw.natural { background: conic-gradient(from 45deg, #f7dcc9, #8a5636, #2c1c12, #dcbc7c, #3b78bf, #f7dcc9); position: relative; }
+.sw.natural::after { content: ""; position: absolute; inset: 5px; border-radius: 50%; background: var(--spruce-800); }
+.sw[aria-checked="true"] { border-color: var(--orange); box-shadow: 0 0 0 2px var(--cream-50); }
+.slider { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 10px; font-size: 13px; color: var(--spruce-100); }
+.slider input { accent-color: var(--orange); width: 100%; }
+.btn.mini { padding: 8px 12px; font-size: 13px; justify-self: start; }
+.ink-list { display: grid; gap: 6px; }
+.ink-row { display: grid; grid-template-columns: 1fr 150px; align-items: center; gap: 8px; font-size: 14px; }
+.ink-row small { color: var(--orange-bg); font-size: 12px; }
+.ink-row select { padding: 6px 8px; font-size: 13px; text-transform: none; }
 
 /* Money, health, weapon, crosshair, prompts */
 .hud-stats { position: absolute; right: 32px; top: 96px; display: grid; justify-items: end; gap: 6px; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.5); }
