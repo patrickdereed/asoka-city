@@ -46,7 +46,7 @@ export class Vehicle {
     this.steer = 0; this.airborne = false; this.air = 0;
     this.pitch = 0; this.roll = 0; this.spin = 0;
     this.inWater = 0; this.events = [];
-    this.slip = 0; this.rpm = 900; this.gear = 1; this.throttle = 0; this.braking = false;
+    this.slip = 0; this.rpm = 900; this.gear = 1; this.throttle = 0; this.braking = false; this.hold = 0;
     this.knocked = opts.knocked || (() => {});
   }
 
@@ -126,7 +126,10 @@ export class Vehicle {
         this.r = lerp(this.r, (u * Math.tan(d)) / L, k * 0.5);
         vl *= 1 - k * 0.3;
       }
-      if (inp.brake > 0 && Math.abs(u) < 0.6 && inp.throttle === 0 && u > -0.6) u *= 0.8;
+      // Braking to a stop holds the car for a moment, then keep holding S to reverse.
+      if (!inp.brake || inp.throttle) this.hold = 0;
+      else if (u > 0.6) this.hold = 0.35;
+      else if ((this.hold > 0 || inp.handbrake) && u > -0.6) { this.hold -= dt; u *= 0.8; }
       this.yaw += this.r * dt;
       const nfx = -Math.sin(this.yaw), nfz = -Math.cos(this.yaw), nlx = -Math.cos(this.yaw), nlz = Math.sin(this.yaw);
       this.vx = u * nfx + vl * nlx;

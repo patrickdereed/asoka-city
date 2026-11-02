@@ -35,6 +35,22 @@ while (car.fwdSpeed > 0.3 && t < 10) { car.step(DT, { throttle: 0, brake: 1, ste
 console.log(`100-0 in ${(car.z - d0).toFixed(1)} m`);
 ok(car.z - d0 > 28 && car.z - d0 < 55, "braking distance 28-55 m");
 
+// Keep holding brake after the stop: a short hold, then it reverses.
+run(0.2, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+ok(Math.abs(car.fwdSpeed) < 0.6, `holds briefly at the stop (${car.fwdSpeed.toFixed(2)} m/s)`);
+run(3, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+ok(car.fwdSpeed < -4, `holding brake reverses (${kmh()} km/h)`);
+run(6, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+ok(car.fwdSpeed > -10, `reverse speed is capped (${kmh()} km/h)`);
+// From a standstill, brake reverses straight away.
+car.place(-2.4, -60, Math.PI); car.hold = 0;
+run(1.5, { throttle: 0, brake: 1, steer: 0, handbrake: false });
+ok(car.fwdSpeed < -2, `reverses from a standstill (${kmh()} km/h)`);
+// An empty car (brake + handbrake) stays put.
+car.place(-2.4, -60, Math.PI); car.hold = 0;
+run(5, { throttle: 0, brake: 1, steer: 0, handbrake: true });
+ok(Math.abs(car.fwdSpeed) < 0.6, `parked car stays put (${car.fwdSpeed.toFixed(2)} m/s)`);
+
 // Steady cornering: full lock at 60 km/h should turn, not spin out or explode.
 car.place(-2.4, -60, Math.PI);
 car.vz = 16.7;
