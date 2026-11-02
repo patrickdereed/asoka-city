@@ -81,10 +81,29 @@ void main() {
   if (vPat < .5) {
     c *= .7 + .45 * n1 + .15 * n2 + .1 * n3;
   } else if (vPat < 1.5) {
-    vec2 g = fract(vW.xz / 2.2);
+    // Pavement: concrete flags with joints, each a slightly different tone, stains, gum, the odd crack.
+    vec2 g = fract(vW.xz / 2.2), cell = floor(vW.xz / 2.2);
+    float fa = clamp(1. - 10. * fwidth(vW.x), 0., 1.);
     float line = max(1. - smoothstep(.02, .05, g.x), 1. - smoothstep(.02, .05, g.y));
-    c *= (1. - .18 * line) * (.86 + .14 * n2) * (.92 + .12 * n1) * (.94 + .1 * n3);
+    float hs = hash12(cell);
+    c *= (1. - .18 * line) * (.86 + .14 * n2) * (.92 + .12 * n1) * (.94 + .1 * n3) * (.93 + .1 * hs);
+    c *= 1. - .14 * smoothstep(.6, .82, vnoise(vW.xz * .35 + 11.));
+    vec2 gc = vW.xz * 7.;
+    c *= 1. - .45 * step(.985, hash12(floor(gc))) * (1. - smoothstep(.12, .2, length(fract(gc) - .5))) * fa;
+    c *= 1. + .12 * (hash12(floor(vW.xz * 25.)) - .5) * fa;
+    if (hs > .84) {
+      vec2 q = g - .5;
+      float d = abs(q.x * .8 + q.y * .6 - (hs - .92) * 2.) * 2.2;
+      c *= 1. - .35 * (1. - smoothstep(0., .015 + fwidth(d), d)) * fa;
+    }
     spec = .25;
+  } else if (vPat > 5.5 && vPat < 6.5) {
+    // Kerbstones: speckled granite in 1.2 m lengths.
+    float fa = clamp(1. - 10. * fwidth(vW.x), 0., 1.);
+    vec2 g = fract(vW.xz / 1.2);
+    float joint = max(1. - smoothstep(.0, .02, g.x), 1. - smoothstep(.0, .02, g.y));
+    c *= (.9 + .12 * n2) * (1. + .3 * (hash12(floor(vW.xz * 30.)) - .5) * fa) * (1. - .25 * joint);
+    spec = .35;
   } else if (vPat > 3.5 && vPat < 4.5) {
     float ca = vnoise(vW.xz * 1.3 + uTime * .6) * vnoise(vW.xz * 1.1 - uTime * .5);
     c = mix(c, vec3(.7, .95, 1.), smoothstep(.25, .5, ca) * .5);
@@ -129,7 +148,7 @@ void main() {
   float mw = 0., mg = 0.;
   float tyre = 0.;
   if (ty < 8.5) {
-    mw = max(mw, lineAt(au, hw - .45, .08, aa));
+    mw = max(mw, lineAt(au, hw - .75, .08, aa));
     tyre = (1. - smoothstep(.0, .5, abs(fract(au / 3.6 + .25) - .5) * 3.6 - .9)) * .25;
     c *= 1. - tyre * .5;
     c *= 1. - .25 * smoothstep(hw - 1.2, hw, au);
@@ -150,7 +169,64 @@ void main() {
     bool se = vR.w >= 0. && vR.w - v > 4.2 && vR.w - v < 4.6 && u < 0.;
     if (ss || se) mw = 1.;
   }
-  float wear = .65 + .35 * vnoise(vW.xz * .45);
+  // Asphalt detail: aggregate, cracks, patched trenches, an oil strip down each lane.
+  float fa = clamp(1. - 20. * fwidth(vW.x), 0., 1.);
+  float spk = hash12(floor(vW.xz * 40.));
+  c *= 1. + fa * (spk > .93 ? .2 : spk < .06 ? -.15 : 0.);
+  float cn = vnoise(vW.xz * .55 + 3.1) * .65 + vnoise(vW.xz * 2.3) * .35;
+  float crack = (1. - smoothstep(0., fwidth(cn) * 1.3 + .003, abs(cn - .5))) * smoothstep(.55, .75, vnoise(vW.xz * .07 + 7.)) * clamp(1. - 3. * fwidth(vW.x), 0., 1.);
+  float gloss = 0.;
+  if (ty < 8.5) {
+    vec2 pc = vec2(floor((u + hw) / 3.), floor(v / 11.));
+    float ph = hash12(pc + hw * 1.7 + ty);
+    if (ph > .86) {
+      vec2 pf = vec2(fract((u + hw) / 3.), fract(v / 11.));
+      vec2 lo = vec2(.1 + .3 * hash12(pc + 1.), .1 + .4 * hash12(pc + 2.)), hi = lo + vec2(.5, .3);
+      float inP = step(lo.x, pf.x) * step(pf.x, hi.x) * step(lo.y, pf.y) * step(pf.y, hi.y);
+      vec2 dm = min(pf - lo, hi - pf) * vec2(3., 11.);
+      float seam = inP * (1. - smoothstep(0., .05 + aa, min(dm.x, dm.y)));
+      c = mix(c, c * (ph > .93 ? .7 : 1.16), inP);
+      c *= 1. - .45 * seam;
+      crack *= 1. - inP;
+    }
+    float oil = (1. - smoothstep(.2, .6, abs(fract(au / 3.6 - .25) - .5) * 3.6)) * smoothstep(.3, .7, vnoise(vec2(u * 2., v * .2)));
+    c *= 1. - .16 * oil; gloss = oil;
+    // Concrete gutter along the kerb, jointed every 3 m.
+    float gut = smoothstep(hw - .48, hw - .44, au);
+    vec3 conc = lin(vec3(.5, .49, .47)) * (.85 + .2 * g) * (1. - .3 * (1. - smoothstep(0., .03 + fwidth(v), abs(fract(v / 3.) - .5) * 3. - 1.47)));
+    c = mix(c, conc, gut);
+    mw *= 1. - gut;
+    // Storm drains in the gutter.
+    float dv = mod(v + hw * 3., 31.) - 15.5;
+    if (gut > .5 && abs(dv) < .5) {
+      float slot = step(.5, fract(dv * 9.));
+      c = mix(c, lin(vec3(.1, .1, .1)) * (.6 + .5 * slot), step(au, hw - .08));
+    }
+    // A manhole cover or two per block.
+    float seg = floor(v / 37.), mh = hash12(vec2(seg, hw * 3.1 + ty + vR.z * .01));
+    vec2 mc = vec2((mh - .5) * max(hw * 2. - 4., 0.), (seg + .5) * 37.);
+    float md = length(vec2(u, v) - mc);
+    if (mh > .25 && md < .7) {
+      float ring = smoothstep(.55, .58, md);
+      float hatch = step(.5, fract((u - mc.x + v - mc.y) * 5.)) * step(.5, fract((u - mc.x - v + mc.y) * 5.));
+      vec3 iron = lin(vec3(.19, .18, .17)) * (.8 + .3 * hatch);
+      c = mix(iron, lin(vec3(.32, .31, .3)), ring);
+      crack = 0.; mw = 0.; mg = 0.; gloss = .8;
+    }
+    // Turn arrows painted in the lanes before the stop lines.
+    if (ty < 1.5) {
+      float lc = ty < .5 ? 1.7 : (au < 3.7 ? 1.95 : 5.6);
+      float dS = vR.z >= 0. && u > 0. ? v - vR.z : vR.w >= 0. && u < 0. ? vR.w - v : -1.;
+      if (dS > 6. && dS < 12. && au < hw - 2.) {
+        float x = abs(au - lc);
+        float head = step(dS, 7.6) * step(x, .5 * (dS - 6.) / 1.6);
+        float shaft = step(7.6, dS) * step(dS, 11.6) * step(x, .13);
+        mw = max(mw, max(head, shaft));
+      }
+    }
+  }
+  c *= 1. - .5 * crack;
+  float wear = (.65 + .35 * vnoise(vW.xz * .45)) * (1. - crack);
   c = mix(c, white, mw * wear);
   c = mix(c, gold, mg * wear);
   vec3 n = vec3(0., 1., 0.);
@@ -163,7 +239,7 @@ void main() {
   float fres = .03 + .97 * pow(1. - abs(V.y), 5.);
   vec3 R = reflect(V, n);
   col = mix(col, col * .55, wet * .6);
-  col += skyRefl(R) * fres * (.08 + wet * .9);
+  col += skyRefl(R) * fres * (.08 + wet * .9 + gloss * .25);
   col += uLightCol * pow(max(dot(R, uLightDir), 0.), 60. + wet * 400.) * (1. + wet * 6.) * sh;
   gl_FragColor = vec4(fog(col, vW), 1.);
 }`;

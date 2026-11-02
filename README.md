@@ -78,6 +78,12 @@ crowns, steel fins and a lit crown line on the glass towers, balconies and corni
 on pitched roofs, and air-con units, vents, stair housings and masts on flat roofs. Pedestrians collide
 with the same building, lamp and tree colliders as the player.
 
+Streets: the road shader adds aggregate, cracks, patched trenches, an oil strip down each lane, a
+concrete gutter with storm drains, manhole covers and turn arrows before the stop lines. Pavements are
+concrete flags with stains, gum and the odd crack, edged with granite kerbstones. Along them: street
+trees in grated pits, parking meters beside the kerbside parking, bus shelters with lit adverts on the
+avenues and street-name signs on junction corners. Traffic and parked cars spin and steer their wheels.
+
 ## People
 
 Pavement crowds and the player's own character are Microsoft Rocketbox avatars (MIT): 20 casual adults

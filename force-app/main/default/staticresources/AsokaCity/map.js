@@ -697,6 +697,25 @@ export class World {
               }
             }
           }
+          // Street trees in grated pits halfway to the next lamp, on the town streets.
+          if (urban && !elevated && e.type !== 2 && !palmy && dist !== "gardens" && s + 16 < e.sB - 10 && s + 16 > e.sA + 10) {
+            const qx = px + tx * 16, qz = pz + tz * 16, h = hash2(Math.round(qx), Math.round(qz), 59);
+            if (h < 0.75 && shoreDist(qx, qz) > 1 && !this.nearRoad(qx, qz, out, 0.6) && !out.venues.some((v) => Math.hypot(v.x - qx, v.z - qz) < 5)) {
+              const qy = this.height(qx, qz) + 0.15;
+              out.props.push({ kind: "pit", x: qx, z: qz, y: qy, rot: Math.atan2(tx, tz), id: out.props.length });
+              out.props.push({ kind: "tree", x: qx, z: qz, y: qy - 0.15, s: 0.6 + 0.25 * h, rot: h * 40, id: out.props.length, tone: hash2(Math.round(qx), Math.round(qz), 61) });
+              out.circles.push({ x: qx, z: qz, r: 0.3, kind: "tree", y1: qy + 6 });
+            }
+          }
+          // A bus shelter at the back of the pavement on about a third of the avenue blocks.
+          if (urban && !elevated && e.type === 1 && side > 0 && k === 2 && hash2(e.id, 3, 67) < 0.35 && s + 8 < e.sB - 14 && s + 8 > e.sA + 14) {
+            const bo = e.hw + 3.7, bx = x - tz * bo + tx * 8, bz = z + tx * bo + tz * 8;
+            if (shoreDist(bx, bz) > 2 && !this.nearRoad(bx, bz, out, 1.2) && !out.venues.some((v) => Math.hypot(v.x - bx, v.z - bz) < 8)) {
+              const id = out.props.length, by = this.height(bx, bz) + 0.15;
+              out.props.push({ kind: "shelter", x: bx, z: bz, y: by, rot: Math.atan2(-tz, tx), id, ad: hash2(Math.round(bx), Math.round(bz), 63) });
+              for (const d of [-1.4, 0, 1.4]) out.circles.push({ x: bx + tx * d, z: bz + tz * d, r: 0.75, kind: "lamp", id, y1: by + 2.5 });
+            }
+          }
           if (palmy && !elevated && e.type !== 2) {
             const qx = x - tz * (off + 0.2) * side + tx * 16, qz = z + tx * (off + 0.2) * side + tz * 16;
             if (shoreDist(qx, qz) > 1 && !this.nearRoad(qx, qz, out, 1.5)) this.addPalm(out, r, qx, qz);
@@ -722,9 +741,30 @@ export class World {
             const box = ax ? { x0: x - hl, z0: z - hw, x1: x + hl, z1: z + hw, y1: y + 1.6 } : { x0: x - hw, z0: z - hl, x1: x + hw, z1: z + hl, y1: y + 1.6 };
             out.boxes.push(box);
             out.parked.push({ x, z, y, yaw, type, box, color: CAR_COLS[Math.floor(hash2(Math.round(x), Math.round(z), 5) * CAR_COLS.length)] });
+            // A parking meter on the kerb behind most parked cars.
+            if (hsh < 0.26) {
+              const mo = e.hw + 0.55, ms = (s - 3.25 - p.s) / (q.s - p.s || 1);
+              const mx = lerp(p.x, q.x, ms) - p.tz * mo * side, mz = lerp(p.z, q.z, ms) + p.tx * mo * side;
+              if (!this.nearRoad(mx, mz, out, 0.2)) {
+                const id = out.props.length, my = this.height(mx, mz) + 0.15;
+                out.props.push({ kind: "meter", x: mx, z: mz, y: my, rot: Math.atan2(p.tx * side, p.tz * side), id });
+                out.circles.push({ x: mx, z: mz, r: 0.1, kind: "lamp", id, y1: my + 1.3 });
+              }
+            }
           }
         }
       }
+    }
+    // Street-name signs on one corner of each town junction.
+    for (const n of out.nodes || []) {
+      if (n.water || n.edges.filter((e) => e.main).length < 3 || !URBAN.has(districtAt(n.x, n.z))) continue;
+      const h = hash2(Math.round(n.x), Math.round(n.z), 77), sx = h < 0.5 ? 1 : -1, sz = (h * 7) % 1 < 0.5 ? 1 : -1;
+      const x = n.x + (n.hx + 1.1) * sx, z = n.z + (n.hz + 1.1) * sz;
+      // (nearRoad pads junctions by 2 m; a negative pad still keeps the post off every road.)
+      if (shoreDist(x, z) < 1 || this.nearRoad(x, z, out, -1.5)) continue;
+      const id = out.props.length, y = this.height(x, z) + 0.15;
+      out.props.push({ kind: "namesign", x, z, y, id, sx, sz });
+      out.circles.push({ x, z, r: 0.12, kind: "lamp", id, y1: y + 3.2 });
     }
   }
 

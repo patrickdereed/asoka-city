@@ -242,7 +242,9 @@ function buildGround(world, cx, cz) {
 
 function buildSlabs(world, data) {
   const g = new Geo({ pat: 1 });
-  for (const s of data.slabs) {
+  for (let s of data.slabs) {
+    // Pavements reach the road edge: the generator leaves a 0.3 m gap that showed grass.
+    if (s.pat === 1) s = { ...s, x0: s.x0 - 0.3, z0: s.z0 - 0.3, x1: s.x1 + 0.3, z1: s.z1 + 0.3 };
     const col = hex(s.color);
     g.e.pat = [s.pat];
     const lift = SLAB_Y + (s.pat === 4 ? 0.05 : s.pat === 0 ? -0.02 : 0);
@@ -250,6 +252,23 @@ function buildSlabs(world, data) {
     const P = (i, j) => { const x = lerp(s.x0, s.x1, i / nx), z = lerp(s.z0, s.z1, j / nz); return [x, world.height(x, z) + lift, z]; };
     for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
       g.quad(P(i, j), P(i + 1, j), P(i + 1, j + 1), P(i, j + 1), col, null, [0, 1, 0]);
+    }
+    // Granite kerbstones round the pavements.
+    if (s.pat === 1) {
+      g.e.pat = [6];
+      const kc = hex(0xbdb9b2), kw = 0.32;
+      const strip = (x0, z0, x1, z1) => {
+        const n = Math.max(1, Math.ceil(Math.max(x1 - x0, z1 - z0) / 16));
+        for (let k = 0; k < n; k++) {
+          const ax = lerp(x0, x1, k / n), bx = lerp(x0, x1, (k + 1) / n), az = lerp(z0, z1, k / n), bz = lerp(z0, z1, (k + 1) / n);
+          const Y = (x, z) => world.height(x, z) + lift + 0.012;
+          if (x1 - x0 > z1 - z0) g.quad([ax, Y(ax, z0), z0], [bx, Y(bx, z0), z0], [bx, Y(bx, z1), z1], [ax, Y(ax, z1), z1], kc, null, [0, 1, 0]);
+          else g.quad([x0, Y(x0, az), az], [x1, Y(x1, az), az], [x1, Y(x1, bz), bz], [x0, Y(x0, bz), bz], kc, null, [0, 1, 0]);
+        }
+      };
+      strip(s.x0, s.z0, s.x1, s.z0 + kw); strip(s.x0, s.z1 - kw, s.x1, s.z1);
+      strip(s.x0, s.z0 + kw, s.x0 + kw, s.z1 - kw); strip(s.x1 - kw, s.z0 + kw, s.x1, s.z1 - kw);
+      g.e.pat = [s.pat];
     }
     // Kerb faces so slabs don't look painted on.
     if (s.pat !== 4) {
@@ -590,6 +609,45 @@ function propFurniture(g, p) {
     g.tube([p.x, p.y, p.z], [p.x, p.y + 0.7, p.z], 0.15, 0.15, hex(0xff6018), 6);
     g.tube([p.x, p.y + 0.7, p.z], [p.x, p.y + 0.85, p.z], 0.15, 0.05, hex(0xff6018), 6);
     g.box(0, 0.5, 0, 0.5, 0.1, 0.1, hex(0xd8d0c4), p.rot, p.x, p.y, p.z);
+  } else if (p.kind === "pit") {
+    // Tree pit: an iron grate round the trunk.
+    const iron = hex(0x2b2e2e), soil = hex(0x3a2e24);
+    g.box(0, 0.015, 0, 1.4, 0.03, 1.4, iron, p.rot, p.x, p.y, p.z);
+    for (let k = -2; k <= 2; k++) g.box(k * 0.26, 0.035, 0, 0.05, 0.02, 1.3, hex(0x45494a), p.rot, p.x, p.y, p.z);
+    g.box(0, 0.04, 0, 0.5, 0.02, 0.5, soil, p.rot, p.x, p.y, p.z);
+  } else if (p.kind === "meter") {
+    const grey = hex(0x5d6466), head = hex(0x283f43);
+    g.tube([p.x, p.y, p.z], [p.x, p.y + 1.05, p.z], 0.04, 0.04, grey, 6);
+    g.box(0, 1.22, 0, 0.2, 0.34, 0.15, head, p.rot, p.x, p.y, p.z);
+    g.box(0, 1.42, 0, 0.16, 0.06, 0.12, grey, p.rot, p.x, p.y, p.z);
+    g.e.cdata = [0, 3];
+    g.box(0, 1.27, -0.078, 0.12, 0.08, 0.01, hex(0x3fd0c9), p.rot, p.x, p.y, p.z);
+    g.e.cdata = [0, 0];
+  } else if (p.kind === "shelter") {
+    // Bus shelter: local x along the kerb, +z away from the road.
+    const steel = hex(0x283f43), glass = hex(0x9fb7bd), wood = hex(0xa7957d);
+    const B = (x, y, z, sx, sy, sz, c) => g.box(x, y, z, sx, sy, sz, c, p.rot, p.x, p.y, p.z);
+    B(0, 2.5, 0.05, 4.2, 0.1, 1.8, steel);
+    for (const x of [-2, 2]) for (const z of [-0.7, 0.75]) B(x, 1.25, z, 0.08, 2.5, 0.08, steel);
+    B(0, 1.3, 0.78, 3.9, 2.0, 0.04, glass);
+    B(0, 0.25, 0.78, 3.9, 0.08, 0.06, steel);
+    B(-2, 1.3, 0.05, 0.04, 2.0, 1.4, glass);
+    B(-0.4, 0.46, 0.5, 2.2, 0.06, 0.4, wood);
+    for (const x of [-1.4, 0.6]) B(x, 0.22, 0.5, 0.06, 0.44, 0.36, steel);
+    // Lit advert panel at the downstream end.
+    B(2, 1.25, 0.05, 0.14, 2.1, 1.3, steel);
+    g.e.cdata = [0, 3];
+    const ad = [hex(0xff6a2e), hex(0x3fd0c9), hex(0xffc667), hex(0xcc75a0)][Math.floor((p.ad || 0) * 4)].map((v) => v * 0.5);
+    for (const sx of [-1, 1]) B(2 + sx * 0.075, 1.3, 0.05, 0.01, 1.7, 1.05, ad);
+    g.e.cdata = [0, 0];
+  } else if (p.kind === "namesign") {
+    // Street-name sign: a post with two blades, one along each street.
+    const pole = hex(0x5d6466), green = hex(0x1f5c45), white = hex(0xfff7ee);
+    g.tube([p.x, p.y, p.z], [p.x, p.y + 3.1, p.z], 0.05, 0.05, pole, 6);
+    g.box(-p.sx * 0.55, 3.0, 0, 1.2, 0.22, 0.03, green, 0, p.x, p.y, p.z);
+    g.box(-p.sx * 0.55, 3.0, 0, 1.12, 0.03, 0.035, white, 0, p.x, p.y, p.z);
+    g.box(0, 2.72, -p.sz * 0.55, 0.03, 0.22, 1.2, green, 0, p.x, p.y, p.z);
+    g.box(0, 2.72, -p.sz * 0.55, 0.035, 0.03, 1.12, white, 0, p.x, p.y, p.z);
   } else if (p.kind === "bench") {
     const wood = hex(0xa7957d), iron = hex(0x283f43);
     g.box(0, 0.45, 0, 1.8, 0.08, 0.5, wood, p.rot, p.x, p.y, p.z);
@@ -664,7 +722,7 @@ function buildStreet(data, knocked) {
     if (p.kind === "lamp") { if (knocked.has(p.id)) continue; propLamp(g, p); }
     else if (p.kind === "hut") propHut(g, p);
     else if (p.kind === "umbrella") propUmbrella(g, p);
-    else if (p.kind === "bin" || p.kind === "hydrant" || p.kind === "bench") propFurniture(g, p);
+    else if (p.kind === "bin" || p.kind === "hydrant" || p.kind === "bench" || p.kind === "pit" || p.kind === "meter" || p.kind === "shelter" || p.kind === "namesign") propFurniture(g, p);
     else continue;
     ranges.set(p.id, [start, g.count - start]);
   }
