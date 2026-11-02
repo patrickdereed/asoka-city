@@ -107,20 +107,11 @@ function bake(id, gltf) {
   }
   const body = g.build();
   const wheelOnly = wheelGeo.build();
-  // Traffic gets the wheels merged into the body; the player's car spins its own.
-  const merged = new Geo({ cdata: 2, luv: 2 });
-  merged.pos = g.pos.slice(); merged.nrm = g.nrm.slice(); merged.col = g.col.slice();
-  merged.ex.cdata = g.ex.cdata.slice(); merged.ex.luv = g.ex.luv.slice();
-  for (const w of wheels) {
-    for (let i = 0; i < wheelGeo.pos.length; i += 3) {
-      merged.pos.push(wheelGeo.pos[i] + w.x, wheelGeo.pos[i + 1] + w.y, wheelGeo.pos[i + 2] + w.z);
-    }
-    merged.nrm.push(...wheelGeo.nrm); merged.col.push(...wheelGeo.col);
-    merged.ex.cdata.push(...wheelGeo.ex.cdata); merged.ex.luv.push(...wheelGeo.ex.luv);
-  }
+  // Every car spins its own wheels: traffic and parked cars draw them as instances.
+  const traffic = g.build();
   const L = (rl.nose || 2.2) - (rl.tail || -2.2), W = (rl.hw || 0.95) * 2;
   return {
-    id, body, wheelGeo: wheelOnly, traffic: merged.build(), wheels,
+    id, body, wheelGeo: wheelOnly, traffic, wheels,
     spec: { id, L, W, wr, belt: rl.belt || 0.9, roof: rl.roofY || 1.4, mass: 1150 + L * 60, wheelbase: (rl.zF || 1.3) - (rl.zR || -1.3) },
   };
 }

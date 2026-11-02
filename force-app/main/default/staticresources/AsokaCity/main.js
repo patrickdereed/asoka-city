@@ -71,7 +71,7 @@ let world, U, mats, city, sky, sea, hud, bigmap, input, audio, traffic, player, 
 let crowd, walker, me = null, mode = "drive", creatorLook = 0, combat, arsenal;
 const PRONOUNS = { man: "he/him", woman: "she/her", nonbinary: "they/them" };
 prefs.character = prefs.character || null;
-let playerMesh, wheels = [], trafficMeshes = [], parkedMeshes = [], kits = [], carGlow, carGlowMesh, shadows;
+let playerMesh, wheels = [], trafficMeshes = [], parkedMeshes = [], wheelMeshes = [], kits = [], carGlow, carGlowMesh, shadows;
 let hour = 18.0, time = 0, camMode = 0, camYaw = 0, camPitch = -0.12, camPos = new THREE.Vector3(), shake = 0;
 const CAM_PITCH = -0.12;
 let lookIdle = 0, carLook = { yaw: 0, pitch: 0, idle: 0 };   // mouse look on foot and from the car
@@ -140,6 +140,7 @@ async function boot() {
   for (const b of bodies) trafficMeshes.push(inst(b.geo, 40));
   if (kits.length) {
     for (const b of bodies) parkedMeshes.push(inst(b.geo, 24));
+    for (const k of kits) wheelMeshes.push(inst(k.wheelGeo, (40 + 24) * k.wheels.length));
     traffic.types = bodies.map((b) => b.spec);
     traffic.cabType = Math.max(0, kits.findIndex((k) => k.id === "toyama"));
   }
@@ -246,7 +247,7 @@ function showTitle() {
         </div>
         <ul class="keys">
           <li><kbd>W</kbd><kbd>S</kbd> drive / walk</li><li><kbd>A</kbd><kbd>D</kbd> steer / sidestep</li><li><kbd>F</kbd> get out / in</li>
-          <li><kbd>E</kbd> enter, shop, use</li><li>Hold a mouse button: look; right aims, left fires</li><li><kbd>Q</kbd> or wheel: weapon</li>
+          <li><kbd>E</kbd> enter, shop, use</li><li>Hold a mouse button: look; right aims, left fires while aiming</li><li><kbd>Q</kbd> or wheel: weapon</li>
           <li><kbd>R</kbd> reload (on foot) / reset car</li><li><kbd>Shift</kbd> jog</li><li><kbd>C</kbd> camera · <kbd>M</kbd> map</li><li><kbd>H</kbd> horn · <kbd>[</kbd><kbd>]</kbd> time</li>
         </ul>
         <p class="fine">Hold a mouse button to look around; let go and the camera swings back behind you. Gamepads: sticks move and look, triggers aim and fire, X to use. Press <kbd>?</kbd> in the city for every control, and Esc for brightness and contrast.</p>
@@ -282,7 +283,7 @@ function startAtHome(v) {
 // Every control, for the pause menu and the in-game list (? key): keyboard and mouse, gamepad, what it does.
 const CONTROLS = [
   ["On foot", [["W A S D", "Left stick", "Walk"], ["Shift", "A", "Jog"], ["Hold mouse, ← →", "Right stick", "Look (recentres on release)"], ["Right mouse, K", "LT", "Aim"],
-    ["Left mouse, Space", "RT", "Fire, punch"], ["R", "B", "Reload"], ["Q, Z, wheel", "RB, LB", "Next, previous weapon"], ["1 to 8, 0", "", "Weapon slot, fists"],
+    ["Left mouse, Space (aiming)", "RT (with LT)", "Fire, punch"], ["R", "B", "Reload"], ["Q, Z, wheel", "RB, LB", "Next, previous weapon"], ["1 to 8, 0", "", "Weapon slot, fists"],
     ["E", "X", "Go into a shop or home, use"], ["F", "Y", "Get in, steal or break into a car"]]],
   ["Driving", [["W, ↑", "RT", "Accelerate"], ["S, ↓", "LT", "Brake, reverse"], ["A D, ← →", "Left stick", "Steer"], ["Hold mouse", "Right stick", "Look around"], ["Space", "A", "Handbrake"],
     ["H", "", "Horn"], ["F", "Y", "Get out"], ["R", "B", "Back on the road"]]],
@@ -1002,6 +1003,23 @@ function closeShop() {
 // ---------------------------------------------------------------------------------- main loop
 
 const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), e3 = new THREE.Euler(0, 0, 0, "YXZ"), v3 = new THREE.Vector3(), s3 = new THREE.Vector3(1, 1, 1);
+const wm4 = new THREE.Matrix4(), wq4 = new THREE.Quaternion(), we3 = new THREE.Euler(0, 0, 0, "YXZ"), wv3 = new THREE.Vector3();
+// A car's four wheels as instances, placed in the car's frame: steered about y, then rolled about the axle.
+function putWheels(k, carM, counts, spin, steer) {
+  const im = wheelMeshes[k];
+  if (!im) return;
+  const max = im.instanceMatrix.count;
+  for (const w of kits[k].wheels) {
+    const i = counts[k];
+    if (i >= max) return;
+    counts[k]++;
+    we3.set(-spin, w.front ? steer : 0, 0);
+    wq4.setFromEuler(we3);
+    wv3.set(w.x, w.y, w.z);
+    wm4.compose(wv3, wq4, s3).premultiply(carM);
+    im.setMatrixAt(i, wm4);
+  }
+}
 
 function loop(now) {
   requestAnimationFrame(loop);
@@ -1088,7 +1106,8 @@ function tick(dt) {
     const f = input.foot();
     const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw), rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
     const w = arsenal.w;
-    aiming = !inside && (cb.aim || (cb.held && !!w.mag));
+    // Attacks only while aiming: on its own the left button just looks around.
+    aiming = !inside && cb.aim;
     // Let go of the mouse and the camera swings back in behind the character.
     lookIdle = look.held || aiming ? 0 : lookIdle + dt;
     if (lookIdle > 0.15) {
@@ -1112,7 +1131,7 @@ function tick(dt) {
     const chest = new THREE.Vector3(walker.x, walker.y + 1.4, walker.z);
     const aimDir = aimPoint.clone().sub(chest).normalize();
     if (w.range <= 3 || w.throw) aimDir.copy(cd);
-    const res = arsenal.update(dt, { person: me, aiming, held: cb.held && !inside, pressed: cb.pressed && !inside, aimPoint, aimDir, inside: !!inside });
+    const res = arsenal.update(dt, { person: me, aiming, held: cb.held && aiming, pressed: cb.pressed && aiming, aimPoint, aimDir, inside: !!inside });
     if (res && res.kick) { camPitch += res.kick; camYaw += (Math.random() - 0.5) * res.kick * 0.5; }
     if (res && res.hits) hitT = 0.15;
     hitT = Math.max(0, hitT - dt);
@@ -1432,18 +1451,25 @@ function render(dt) {
   playerMesh.children[0].material.uniforms.uBrake.value = player.braking ? 1 : 0;
   playerMesh.children[0].material.uniforms.uLights.value = night > 0.2 ? 1 : 0;
 
-  // Traffic instances
+  // Traffic instances. Wheels roll with the speed and steer into the turn, and the body leans out of it.
   const counts = trafficMeshes.map(() => 0);
+  const wcounts = wheelMeshes.map(() => 0);
   for (const c of traffic.cars) {
     const im = trafficMeshes[c.type];
     if (!im) continue;
     const i = counts[c.type]++;
     if (i >= 40) continue;
-    e3.set(0, c.yaw, 0);
+    const yr = dt > 0 && c.pyaw != null ? angleWrap(c.yaw - c.pyaw) / dt : 0;
+    c.pyaw = c.yaw;
+    const v = Math.abs(c.v || 0), wb = c.spec.wheelbase || 2.6;
+    c.steerV = lerp(c.steerV || 0, v > 0.5 ? clamp(Math.atan((wb * yr) / v), -0.6, 0.6) : c.steerV || 0, Math.min(1, dt * 8));
+    c.lean = lerp(c.lean || 0, clamp(-v * yr * 0.008, -0.05, 0.05), Math.min(1, dt * 5));
+    e3.set(0, c.yaw, c.burnt ? 0 : c.lean);
     q4.setFromEuler(e3);
     v3.set(c.x, c.y, c.z);
     m4.compose(v3, q4, s3);
     im.setMatrixAt(i, m4);
+    putWheels(c.type, m4, wcounts, c.spin || 0, c.steerV);
     const col = hex(c.color);
     im.instanceColor.setXYZ(i, col[0], col[1], col[2]);
   }
@@ -1461,12 +1487,14 @@ function render(dt) {
         e3.set(0, p.yaw, 0); q4.setFromEuler(e3); v3.set(p.x, p.y, p.z);
         m4.compose(v3, q4, s3);
         parkedMeshes[k].setMatrixAt(i, m4);
+        putWheels(k, m4, wcounts, 0, 0);
         const col = hex(p.color);
         parkedMeshes[k].instanceColor.setXYZ(i, col[0], col[1], col[2]);
       }
     }
     parkedMeshes.forEach((im, k) => { im.count = pc[k]; im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; });
   }
+  wheelMeshes.forEach((im, k) => { im.count = wcounts[k]; im.instanceMatrix.needsUpdate = true; });
 
   // Car lights and blob shadows.
   let n = 0, sh = 0;

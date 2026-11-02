@@ -50,7 +50,8 @@ export class Input {
     return { x, y, held: this.buttons.size > 0 || stick || arrows, recent: performance.now() - this.lastMouse < 1500 || stick };
   }
 
-  // Combat buttons: aim (right mouse, left trigger), fire (left mouse, right trigger, Space on foot).
+  // Combat buttons: aim (right mouse, K, left trigger), fire (left mouse, right trigger, Space on foot;
+  // main only lets these through while aiming).
   combat() {
     const p = this.pad();
     const aim = this.buttons.has(2) || this.down.has("KeyK") || !!(p && p.buttons[6] && p.buttons[6].value > 0.3);

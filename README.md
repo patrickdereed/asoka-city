@@ -49,7 +49,7 @@ All of them are on the map (M) and the minimap. Walk up to a door and press E. I
 The arsenal (`weapons.js`) runs from a bat to a rotary minigun: pistols, SMGs, shotguns, rifles, scoped
 rifles, a light machine gun, grenade and rocket launchers, and grenades. Hold a mouse button to look around
 (on foot or in the car); let go and the camera swings back behind you. The right button aims over the
-shoulder, left fires, Q or the wheel changes weapon, R reloads. People
+shoulder and the left fires only while aiming, Q or the wheel changes weapon, R reloads. People
 hit hard enough are knocked down (no blood); everyone nearby runs. Cars can be disabled and set alight.
 
 ## The city
