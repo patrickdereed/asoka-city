@@ -261,6 +261,24 @@ varying vec2 vUv; varying vec3 vB;
 const vec3 NEON[6] = vec3[6](vec3(1., .3, .06), vec3(1., .3, .06), vec3(.08, .75, .7), vec3(1., .6, .15), vec3(.75, .22, .45), vec3(1., .97, .92));
 const float CW[12] = float[12](1.7, 3.6, 3.0, 3.2, 6., 6., 3.4, 4., 4.5, 8., 8., 8.);
 
+// What glass sees: open sky above a skyline of other towers, each with its own grid of windows
+// (lit at night), and the street below the horizon.
+vec3 cityRefl(vec3 r) {
+  vec3 sky = mix(uFogCol, uZenith, clamp(r.y * 2.2, 0., 1.)) + uSunGlow * pow(max(dot(r, uSunDir), 0.), 10.) * .6;
+  if (r.y < -.02) return mix(uGndAmb * .45, uFogCol * .3, .4) + uNight * vec3(.05, .035, .02);
+  float az = atan(r.x, r.z) * 7.64;   // 48 tower slots round the horizon
+  float slot = floor(az), hh = hash12(vec2(slot, 7.));
+  float sl = .03 + .38 * hh * hh;
+  if (r.y > sl) return sky;
+  vec3 tc = mix(uFogCol * .5, mix(uGndAmb, uSkyAmb, .5) * .55, hash12(vec2(slot, 3.)));
+  float gx = fract(az) * 7., gy = r.y * 70.;
+  float fade = clamp(1. - 1.5 * max(fwidth(gx), fwidth(gy)), 0., 1.);
+  float w = step(.3, fract(gx)) * step(.35, fract(gy)) * fade;
+  float lit = step(.62, hash12(vec2(floor(gx) + slot * 9., floor(gy))));
+  vec3 c = mix(tc, tc * .55, w * .7) + w * lit * uNight * vec3(1., .74, .42) * .8;
+  return mix(c, sky, .3);   // haze
+}
+
 // A box room behind each window: which wall the view ray hits decides the shade.
 vec3 room(vec2 cell, float cw, float fh, vec3 V, vec3 n, vec3 t, float h, out float glow) {
   vec3 d = vec3(dot(V, t), V.y, -dot(V, n));
@@ -303,6 +321,20 @@ void main() {
   vec3 col; vec3 emi = vec3(0.);
   if (n.y > .5) {
     col = base * (.85 + .25 * nz) * lc;
+    float fa = clamp(1. - 8. * fwidth(vW.y + vW.x), 0., 1.);
+    if (n.y < .97) {
+      // Pitched roofs: overlapping tile courses, each tile a slightly different fired colour.
+      vec3 rt = normalize(vec3(-n.z, 0., n.x));
+      float along = dot(vW, rt) / .32, row = vW.y / .2;
+      float rf = fract(row), tile = hash12(vec2(floor(along + .5 * mod(floor(row), 2.)), floor(row)) + seed * 3.);
+      col *= mix(1., (.8 + .3 * tile) * mix(.72, 1.05, smoothstep(0., .35, rf)), fa);
+      col *= 1. - .12 * smoothstep(.55, .85, vnoise(vW.xz * .4 + seed * 9.));
+    } else {
+      // Flat roofs: membrane strips with seams, and some ponding stains.
+      float seam = 1. - smoothstep(0., .03 + fwidth(vW.x), abs(fract(vW.x / 1.2) - .5) * 1.2 - .57);
+      col *= mix(1., (1. - .2 * seam) * (.9 + .15 * hash12(vec2(floor(vW.x / 1.2), seed))), fa);
+      col *= 1. - .18 * smoothstep(.6, .85, vnoise(vW.xz * .15 + seed * 5.));
+    }
     if (st > 9.5 && st < 10.5) emi = base * (1. + uNight * 6.);
   } else if (n.y < -.5) {
     col = base * .5 * amb(n);
@@ -319,10 +351,10 @@ void main() {
     vec4 wr = vec4(0.);   // window rect: x0, x1, y0, y1 within the cell
     float avg = 0., litP = .5;
     vec3 wall = base * (.88 + .18 * nz);
-    if (st == 0.) { wr = vec4(.06, .94, .1, .96); avg = .78; litP = .55; }
+    if (st == 0.) { wr = vec4(.03, .97, .3, .98); avg = .78; litP = .55; }
     else if (st == 1.) { wr = fl < .5 ? vec4(.05, .95, .08, .8) : vec4(.1, .9, .38, .8); avg = .32; litP = .45; }
     else if (st == 2.) { wr = vec4(.22, .78, .3, .82); avg = .28; }
-    else if (st == 3.) { wr = step(.35, hash12(vec2(cx, fl) + seed * 31.)) * vec4(.3, .7, .35, .8); avg = .14; litP = .4; }
+    else if (st == 3.) { wr = step(.12, hash12(vec2(cx, fl) + seed * 31.)) * vec4(.28, .72, .33, .82); avg = .18; litP = .4; }
     else if (st == 4.) {
       wall *= .86 + .14 * sin(uv.x * 62.83);
       if (uv.y < 5.5 && mod(cx, 3.) == 1.) wall *= .5;
@@ -332,8 +364,10 @@ void main() {
       wall *= .78 + .22 * smoothstep(-.2, .9, sin(uv.x * 251.3));
       if (fract(uv.y / 2.6) > .93) wall *= .65;
     } else if (st == 6.) { wr = vec4(.04, .96, .42, .86); avg = .42; litP = .75; }
-    else if (st == 7.) { wr = vec4(.04, .96, .05, .97); avg = .85; litP = .12; }
+    else if (st == 7.) { wr = vec4(.03, .97, .3, .98); avg = .85; litP = .12; }
     else if (st == 8.) { wr = fl < .5 ? vec4(.05, .95, .05, .9) : vec4(.25, .75, .3, .8); avg = .45; litP = .7; }
+    // No half windows cut off by the roofline or parapet.
+    if (st != 4. && st != 5. && (fl + wr.w) * fh > top - .1) wr = vec4(0.);
     if (st != 5. && st != 4.) wall *= mix(.6, 1., smoothstep(0., 5., uv.y));
     float cw = CW[si];
     vec2 m = vec2(uv.x * cw, uv.y);   // metres along the face and up from the ground
@@ -358,6 +392,11 @@ void main() {
       float streak = colX * step(.001, below) * smoothstep(1.6, 0., below) * smoothstep(.3, .8, vnoise(vec2((cx + cxF) * 9., uv.y * .35) + seed * 17.));
       wall *= 1. - .25 * streak;
     }
+    // Weathering: broad blotches across the face and grime washed down from the parapet.
+    if (st != 0. && st != 7.) {
+      wall *= .9 + .18 * vnoise(m * vec2(.07, .045) + seed * 50.);
+      wall *= 1. - .16 * smoothstep(top - 5., top - .3, uv.y) * smoothstep(.35, .75, vnoise(vec2(m.x * .9, uv.y * .04) + seed * 3.));
+    }
     // Windows sit back in the wall: the view ray through the opening meets the glass further
     // in, so you see the reveals at an angle, a lit sill below and the lintel's shadow on the glass.
     float recess = st == 0. || st == 7. ? 0. : st == 3. || st == 8. ? .16 : .24;
@@ -369,7 +408,7 @@ void main() {
     float win = step(wr.x, cxF) * step(cxF, wr.y) * step(wr.z, fyF) * step(fyF, wr.w);
     float onGlass = win * step(wm.x, gp.x) * step(gp.x, wm.y) * step(wm.z, gp.y) * step(gp.y, wm.w);
     float reveal = win * (1. - onGlass);
-    float fw = .055;
+    float fw = st == 0. || st == 7. ? .035 : .055;
     float frame = onGlass * (1. - step(wm.x + fw, gp.x) * step(gp.x, wm.y - fw) * step(wm.z + fw, gp.y) * step(gp.y, wm.w - fw));
     if (wm.y - wm.x > 1.5 && st != 0. && st != 7.) frame = max(frame, onGlass * step(abs(gp.x - (wm.x + wm.y) * .5), .035));
     if (st == 1. || st == 8.) frame = max(frame, onGlass * step(abs(gp.y - mix(wm.z, wm.w, .72)), .03));
@@ -388,27 +427,51 @@ void main() {
     float blinds = step(.7, hash12(vec2(cx, fl * 1.7) + seed)) * step(1. - fract(h * 13.) * .8, cell.y);
     float slats = blinds * (.6 + .4 * step(.5, fract(cell.y * 18.)));
     vec3 inside = mix(rc, vec3(.85, .82, .76), slats);
+    float hc = hash12(vec2(cx * 1.3, fl) + seed * 4.1);
+    if ((st == 1. || st == 3. || st == 8.) && hc > .45) {
+      vec3 cc = lin(hc > .86 ? vec3(.72, .3, .24) : hc > .72 ? vec3(.86, .8, .64) : hc > .6 ? vec3(.36, .46, .56) : vec3(.92, .9, .85));
+      float open = .12 + .3 * fract(hc * 17.);
+      float cur = max(step(cell.x, open), step(1. - open * .9, cell.x));
+      inside = mix(inside, cc * (.8 + .2 * sin(cell.x * 70.)), cur);
+    }
     vec3 insideLit = inside * lcol * rg * 2.6 * lit * (.85 + .15 * step(.5, hash12(vec2(cx, fl) + floor(uTime * .1))));
     float lintel = recess > 0. ? mix(.55, 1., smoothstep(0., .45, wm.w - gp.y)) : 1.;
     vec3 insideDay = inside * amb(n) * .22 * lintel;
     float fres = .06 + .94 * pow(1. - abs(dot(V, n)), 4.);
-    vec3 R = reflect(V, n);
-    vec3 refl = skyRefl(R) * (st == 0. || st == 7. ? 1. : .8);
+    // Each pane sits a hair off true, so reflections break up pane by pane.
+    vec3 pn = normalize(n + t * (hash12(vec2(cx, fl) + seed * 5.) - .5) * .05 + vec3(0., 1., 0.) * (hash12(vec2(fl, cx) + seed * 9.) - .5) * .035);
+    vec3 R = reflect(V, pn);
+    vec3 refl = cityRefl(R) * (st == 0. || st == 7. ? 1. : .8);
     if (st == 0. || st == 7.) refl = mix(refl, refl * base * 1.6, .35);
     if (st == 6.) refl = mix(refl, refl * vec3(.4, .9, .95), .4);
     float sunSpec = pow(max(dot(R, uLightDir), 0.), 200.) * sh;
-    float glassRefl = st == 0. || st == 7. ? mix(.35, 1., fres) : fres;
+    float glassRefl = st == 0. || st == 7. ? mix(.35, 1., fres) : max(fres, .12);
     vec3 glass = mix(insideDay, refl * lintel, glassRefl) + uLightCol * sunSpec * 4. * lintel;
-    vec3 frameC = st == 0. || st == 7. ? vec3(.05, .06, .07) * lc : st == 3. || st == 8. ? vec3(.85, .83, .78) * lc : wall * lc * .45;
+    vec3 frameC = st == 0. || st == 7. ? vec3(.42, .44, .45) * lc : st == 3. || st == 8. ? vec3(.85, .83, .78) * lc : wall * lc * .45;
     float topR = step(wm.w, gp.y), botR = step(gp.y, wm.z);
     vec3 revealC = wall * lc * mix(.7, .4, topR) * mix(1., 1.3, botR);
-    vec3 near = mix(wall * lc, glass, onGlass);
+    // Curtain walls: an opaque spandrel panel over each floor slab, with a dark joint at the slab.
+    vec3 wallC = wall * lc;
+    if (st == 0. || st == 7.) {
+      wallC = base * .1 * lc + refl * (.3 + .45 * fres) + uLightCol * sunSpec * 2.;
+      wallC *= 1. - .6 * step(fyF, .025);
+    }
+    vec3 near = mix(wallC, glass, onGlass);
     near = mix(near, frameC, frame);
     near = mix(near, revealC, reveal);
     near = mix(near, min(wall * 1.25 + .04, vec3(1.)) * lc, sill);
     near *= 1. - .3 * underSill;
+    // A window air-con unit here and there, with a drip stain under it.
+    if ((st == 1. || st == 3. || st == 2.) && wr.y > wr.x && hash12(vec2(cx, fl) + seed * 2.7) > .93) {
+      vec2 ap = pm - vec2(mix(wm.x, wm.y, .5), wm.z);
+      float inU = step(0., ap.x) * step(ap.x, .62) * step(0., ap.y) * step(ap.y, .42);
+      float grille = step(.5, fract(ap.y * 22.)) * step(.05, ap.x) * step(ap.x, .32);
+      near = mix(near, vec3(.62, .62, .6) * lc * (1. - .35 * grille), inU);
+      near *= 1. - .35 * step(0., ap.x) * step(ap.x, .62) * step(-.7, ap.y) * step(ap.y, 0.) * smoothstep(-.7, 0., ap.y);
+      onGlass *= 1. - inU;
+    }
     vec3 nearE = insideLit * onGlass * (1. - frame) * (1. - glassRefl * .5) * uNight;
-    vec3 far = mix(wall * lc, mix(vec3(.02), skyRefl(R), glassRefl * .8), avg);
+    vec3 far = mix(wallC, mix(vec3(.02), refl, glassRefl * .8), avg);
     vec3 farE = lcol * avg * litP * 1.4 * uNight;
 
     // Street level: shopfronts and lobbies on the towers and offices, front doors on the houses.

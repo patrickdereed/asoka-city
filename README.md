@@ -73,7 +73,11 @@ Buildings are boxes dressed in the shader and with a little geometry. The buildi
 and offices shopfronts and lobbies at street level (bays with doors, signs and lit interiors), houses front
 doors with porch lights, and every other floor recessed windows: the glass sits back from the wall, so the
 reveals, sills and the lintel's shadow move with the view. Walls are painted brick or stone coursing, with
-rain streaks under the sills. `detailBuilding` in `render.js` adds corner piers and pilasters, art deco
+rain streaks under the sills, broad weathering and grime washed down from the parapet. Glass reflects a
+skyline of other towers (with their windows lit at night) rather than open sky, each pane a hair off true
+so the reflections break up; curtain walls have spandrel panels over each floor slab and aluminium
+mullions. Homes have curtains and the odd window air-con unit, pitched roofs have tile courses and flat
+roofs membrane strips. Windows that would be cut by a roofline or parapet are left out. `detailBuilding` in `render.js` adds corner piers and pilasters, art deco
 crowns, steel fins and a lit crown line on the glass towers, balconies and cornices on houses, chimneys
 on pitched roofs, and air-con units, vents, stair housings and masts on flat roofs. Pedestrians collide
 with the same building, lamp and tree colliders as the player.
