@@ -381,6 +381,110 @@ function detailBuilding(g, b, col, packed) {
     g.tube([x, top + 3, z], [x, top + 6.2, z], 1.7, 1.7, wood, 10);
     g.tube([x, top + 6.2, z], [x, top + 7.4, z], 1.8, 0.05, steel, 10);
   }
+  const flat = !b.roof;
+  const tiers = b.tiers && b.tiers.length;
+  // Corner piers and pilasters between the window bays, from above the shopfronts to the parapet.
+  if ((b.style === ST.DECO || b.style === ST.OFFICE || b.style === ST.HOSP) && b.h > 8) {
+    const pc = [col[0] * 0.92, col[1] * 0.92, col[2] * 0.9];
+    const y1 = top - 0.2, cw = CELLW[b.style];
+    for (const [x, z] of [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]]) band(g, x - 0.35, z - 0.35, x + 0.35, z + 0.35, b.gy + 0.3, y1, 0, pc);
+    const every = b.style === ST.OFFICE ? 2 : 3;
+    if (b.h > 12) for (const [a0, a1, fixed, axis, sgn] of [[b.x0, b.x1, b.z0, 0, -1], [b.x0, b.x1, b.z1, 0, 1], [b.z0, b.z1, b.x0, 1, -1], [b.z0, b.z1, b.x1, 1, 1]]) {
+      const cells = Math.max(1, Math.round((a1 - a0) / cw)), step = (a1 - a0) / cells;
+      for (let k = every; k < cells - every / 2; k += every) {
+        const a = a0 + k * step, f = fixed + sgn * 0.08;
+        if (axis === 0) band(g, a - 0.17, f - 0.1, a + 0.17, f + 0.1, b.gy + 3.7, y1, 0, pc);
+        else band(g, f - 0.1, a - 0.17, f + 0.1, a + 0.17, b.gy + 3.7, y1, 0, pc);
+      }
+    }
+  }
+  // Art deco crowns: stepped piers rising over the parapet in the middle of each long face.
+  if (b.style === ST.DECO && flat && !tiers && b.h > 14 && W > 12) {
+    const cx = (b.x0 + b.x1) / 2;
+    for (const [z, dz] of [[b.z0, 1], [b.z1, -1]]) {
+      let y = top + 0.9;
+      for (let k = 0; k < 3; k++) {
+        const hw = W * (0.16 - k * 0.045), hh = 1.4 - k * 0.3;
+        band(g, cx - hw, Math.min(z, z + dz * 1.2), cx + hw, Math.max(z, z + dz * 1.2), y, y + hh, 0, trim);
+        y += hh;
+      }
+    }
+  }
+  // Glass towers: steel fins up the curtain wall, a lit crown line at the top.
+  if ((b.style === ST.GLASS || b.style === ST.LOGO) && b.h > 20) {
+    const steel = [0.16, 0.18, 0.2];
+    const boxes = [{ x0: b.x0, z0: b.z0, x1: b.x1, z1: b.z1, y1: b.h }, ...(b.tiers || [])];
+    for (const t of boxes) {
+      const ya = b.gy + (t.y0 != null ? t.y0 : 4.2), yb = b.gy + t.y1;
+      for (const [a0, a1, fixed, axis, sgn] of [[t.x0, t.x1, t.z0, 0, -1], [t.x0, t.x1, t.z1, 0, 1], [t.z0, t.z1, t.x0, 1, -1], [t.z0, t.z1, t.x1, 1, 1]]) {
+        const n = Math.max(1, Math.round((a1 - a0) / 3.4));
+        for (let k = 1; k < n; k++) {
+          const a = a0 + ((a1 - a0) * k) / n, f = fixed + sgn * 0.14;
+          if (axis === 0) band(g, a - 0.07, f - 0.14, a + 0.07, f + 0.14, ya, yb, 0, steel, ST.STEEL);
+          else band(g, f - 0.14, a - 0.07, f + 0.14, a + 0.07, ya, yb, 0, steel, ST.STEEL);
+        }
+      }
+    }
+    const t = boxes[boxes.length - 1], yb = b.gy + t.y1;
+    if (u(11) < 0.6) band(g, t.x0, t.z0, t.x1, t.z1, yb - 0.55, yb - 0.25, 0.06, u(12) < 0.5 ? [0.85, 0.95, 1] : [1, 0.85, 0.6], ST.NEON);
+    band(g, t.x0, t.z0, t.x1, t.z1, yb, yb + 1.1, 0, [0.2, 0.22, 0.24], ST.CONC);
+  }
+  // Houses: a cornice, and balconies on some.
+  if (b.style === ST.HOUSE || b.style === ST.VILLA) {
+    if (flat) band(g, b.x0, b.z0, b.x1, b.z1, top - 0.3, top + 0.35, 0.28, trim);
+    if (b.h > 7 && u(13) < 0.5) {
+      const cw = CELLW[b.style], fh = b.style === ST.HOUSE ? 3 : 3.5, rail = u(14) < 0.5 ? trim : [col[0] * 0.72, col[1] * 0.72, col[2] * 0.7];
+      let made = 0;
+      for (const [z, dz] of [[b.z0, -1], [b.z1, 1]]) {
+        const cells = Math.max(1, Math.round(W / cw)), step = W / cells;
+        for (let f = 1; f * fh < b.h - 1.5 && made < 48; f++) for (let k = (f % 2); k < cells && made < 48; k += 2) {
+          const xa = b.x0 + k * step + 0.25, xb = b.x0 + (k + 1) * step - 0.25, y = b.gy + f * fh;
+          const za = Math.min(z, z + dz * 1.1), zb = Math.max(z, z + dz * 1.1);
+          band(g, xa, za, xb, zb, y - 0.15, y, 0, trim);
+          const zo = z + dz * 1.05;
+          band(g, xa, Math.min(zo, zo - dz * 0.06), xb, Math.max(zo, zo - dz * 0.06), y, y + 0.95, 0, rail);
+          made++;
+        }
+      }
+    }
+  }
+  // Chimneys on pitched roofs.
+  if (b.roof && W > 5 && D > 5 && u(16) < 0.75) {
+    const rh = Math.min(W, D) * 0.38, brick = u(17) < 0.6 ? [0.55, 0.3, 0.24] : [col[0] * 0.8, col[1] * 0.8, col[2] * 0.78];
+    const x = b.roof === 1 ? lerp(b.x0 + 1, b.x1 - 1.8, u(18)) : (b.x0 + b.x1) / 2 + W * 0.12;
+    const z = b.roof === 1 ? (b.z0 + b.z1) / 2 + D * 0.12 : lerp(b.z0 + 1, b.z1 - 1.8, u(18));
+    band(g, x, z, x + 0.8, z + 0.8, top, top + rh + 0.9, 0, brick, ST.CONC);
+    band(g, x - 0.08, z - 0.08, x + 0.88, z + 0.88, top + rh + 0.9, top + rh + 1.05, 0, [0.35, 0.33, 0.32], ST.CONC);
+  }
+  // Rooftop plant on flat roofs: air-con units, vents, a stair housing, sometimes a mast.
+  if (flat && b.style !== ST.HOUSE && b.style !== ST.VILLA && W > 9 && D > 9) {
+    const t = tiers ? b.tiers[b.tiers.length - 1] : { x0: b.x0, z0: b.z0, x1: b.x1, z1: b.z1, y1: b.h };
+    const ty = b.gy + t.y1 + (b.style === ST.GLASS || b.style === ST.LOGO ? (b.h > 20 ? 1.1 : 0) : !tiers && b.h > 12 && (b.style === ST.DECO || b.style === ST.OFFICE || b.style === ST.HOSP) ? 0.9 : 0);
+    const tw = t.x1 - t.x0, td = t.z1 - t.z0;
+    if (tw > 6 && td > 6) {
+      const grey = [0.7, 0.7, 0.68], dark = [0.42, 0.43, 0.42];
+      const n = 2 + Math.floor(u(15) * 4);
+      for (let k = 0; k < n; k++) {
+        const x = lerp(t.x0 + 2, t.x1 - 3.5, u(20 + k)), z = lerp(t.z0 + 2, t.z1 - 3, u(30 + k));
+        band(g, x, z, x + 1.6, z + 1.1, ty, ty + 1.1, 0, grey, ST.CONC);
+        band(g, x + 0.3, z + 0.15, x + 1.3, z + 0.95, ty + 1.1, ty + 1.2, 0, dark, ST.STEEL);
+      }
+      for (let k = 0; k < 3; k++) {
+        const x = lerp(t.x0 + 1.5, t.x1 - 1.5, u(40 + k)), z = lerp(t.z0 + 1.5, t.z1 - 1.5, u(50 + k));
+        g.e.bdata = [ST.STEEL, 0.5, 0]; g.e.uv = [0, 0];
+        g.tube([x, ty, z], [x, ty + 1 + u(45 + k), z], 0.14, 0.14, dark, 6);
+      }
+      if (b.h > 12) {
+        const x = lerp(t.x0 + 1.5, t.x1 - 4.5, u(60)), z = lerp(t.z0 + 1.5, t.z1 - 4, u(61));
+        band(g, x, z, x + 3, z + 2.5, ty, ty + 2.8, 0, [col[0] * 0.85, col[1] * 0.85, col[2] * 0.83], ST.CONC);
+      }
+      if (u(62) < 0.3) {
+        const x = lerp(t.x0 + 2, t.x1 - 2, u(63)), z = lerp(t.z0 + 2, t.z1 - 2, u(64));
+        g.e.bdata = [ST.STEEL, 0.5, 0]; g.e.uv = [0, 0];
+        g.tube([x, ty, z], [x, ty + 8 + u(65) * 10, z], 0.18, 0.05, [0.55, 0.57, 0.58], 4);
+      }
+    }
+  }
   const tall = b.tiers && b.tiers.length ? b.tiers[b.tiers.length - 1] : null;
   if (b.style === ST.GLASS && b.h > 70) {
     const t = tall || b, ty = b.gy + (tall ? tall.y1 : b.h);

@@ -73,6 +73,8 @@ const PRONOUNS = { man: "he/him", woman: "she/her", nonbinary: "they/them" };
 prefs.character = prefs.character || null;
 let playerMesh, wheels = [], trafficMeshes = [], parkedMeshes = [], kits = [], carGlow, carGlowMesh, shadows;
 let hour = 18.0, time = 0, camMode = 0, camYaw = 0, camPitch = -0.12, camPos = new THREE.Vector3(), shake = 0;
+const CAM_PITCH = -0.12;
+let lookIdle = 0, carLook = { yaw: 0, pitch: 0, idle: 0 };   // mouse look on foot and from the car
 let state = "loading", acc = 0, last = performance.now(), mapOpen = false;
 let inside = null, shop = null, previewMesh = null, hitT = 0, aimPoint = new THREE.Vector3(), creatorSpin = 0, fade, saveT = 0;
 let cashMesh, boards = new Map(), deadT = 0, pmat, carNow = { k: -1, color: null, livery: true };
@@ -244,10 +246,10 @@ function showTitle() {
         </div>
         <ul class="keys">
           <li><kbd>W</kbd><kbd>S</kbd> drive / walk</li><li><kbd>A</kbd><kbd>D</kbd> steer / sidestep</li><li><kbd>F</kbd> get out / in</li>
-          <li><kbd>E</kbd> enter, shop, use</li><li>Mouse: look, aim (right), fire (left)</li><li><kbd>Q</kbd> or wheel: weapon</li>
+          <li><kbd>E</kbd> enter, shop, use</li><li>Hold a mouse button: look; right aims, left fires</li><li><kbd>Q</kbd> or wheel: weapon</li>
           <li><kbd>R</kbd> reload (on foot) / reset car</li><li><kbd>Shift</kbd> jog</li><li><kbd>C</kbd> camera · <kbd>M</kbd> map</li><li><kbd>H</kbd> horn · <kbd>[</kbd><kbd>]</kbd> time</li>
         </ul>
-        <p class="fine">Click the city to steer the camera with the mouse. Gamepads: sticks move and look, triggers aim and fire, X to use. Press <kbd>?</kbd> in the city for every control, and Esc for brightness and contrast.</p>
+        <p class="fine">Hold a mouse button to look around; let go and the camera swings back behind you. Gamepads: sticks move and look, triggers aim and fire, X to use. Press <kbd>?</kbd> in the city for every control, and Esc for brightness and contrast.</p>
       </div>
     </div>`;
   ui.classList.remove("hidden");
@@ -279,10 +281,10 @@ function startAtHome(v) {
 
 // Every control, for the pause menu and the in-game list (? key): keyboard and mouse, gamepad, what it does.
 const CONTROLS = [
-  ["On foot", [["W A S D", "Left stick", "Walk"], ["Shift", "A", "Jog"], ["Mouse, ← →", "Right stick", "Look"], ["Right mouse, K", "LT", "Aim"],
+  ["On foot", [["W A S D", "Left stick", "Walk"], ["Shift", "A", "Jog"], ["Hold mouse, ← →", "Right stick", "Look (recentres on release)"], ["Right mouse, K", "LT", "Aim"],
     ["Left mouse, Space", "RT", "Fire, punch"], ["R", "B", "Reload"], ["Q, Z, wheel", "RB, LB", "Next, previous weapon"], ["1 to 8, 0", "", "Weapon slot, fists"],
     ["E", "X", "Go into a shop or home, use"], ["F", "Y", "Get in, steal or break into a car"]]],
-  ["Driving", [["W, ↑", "RT", "Accelerate"], ["S, ↓", "LT", "Brake, reverse"], ["A D, ← →", "Left stick", "Steer"], ["Space", "A", "Handbrake"],
+  ["Driving", [["W, ↑", "RT", "Accelerate"], ["S, ↓", "LT", "Brake, reverse"], ["A D, ← →", "Left stick", "Steer"], ["Hold mouse", "Right stick", "Look around"], ["Space", "A", "Handbrake"],
     ["H", "", "Horn"], ["F", "Y", "Get out"], ["R", "B", "Back on the road"]]],
   ["Any time", [["C", "", "Camera"], ["M", "Back", "Map"], ["[ ]", "", "Hour back, forward"], ["?", "", "Show or hide this list"], ["Esc", "Start", "Pause, picture settings"]]],
 ];
@@ -501,12 +503,14 @@ addEventListener("pointerdown", (e) => { if (state === "creator" && e.target ===
 addEventListener("pointermove", (e) => { if (drag != null) { creatorSpin += (e.clientX - drag) * 0.01; drag = e.clientX; } });
 addEventListener("pointerup", () => { drag = null; });
 
-// Pointer lock for mouse look on foot; dragging with the right button works without it.
-canvas.addEventListener("click", () => {
-  if (state === "play" && !mapOpen && (mode === "foot" || inside) && !document.pointerLockElement) {
+// Mouse look while a button is held: pointer lock for the hold so the view can turn all the
+// way round, released with the button (dragging still works if the lock is refused).
+canvas.addEventListener("mousedown", () => {
+  if (state === "play" && !mapOpen && !document.pointerLockElement) {
     try { const r = canvas.requestPointerLock && canvas.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) { /* not allowed in this frame */ }
   }
 });
+addEventListener("mouseup", () => { if (!input.buttons.size) releaseMouse(); });
 function releaseMouse() { if (document.pointerLockElement) document.exitPointerLock(); }
 
 // Get out of the car on the driver's side, or back in when close to it.
@@ -1085,8 +1089,13 @@ function tick(dt) {
     const fx = -Math.sin(camYaw), fz = -Math.cos(camYaw), rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
     const w = arsenal.w;
     aiming = !inside && (cb.aim || (cb.held && !!w.mag));
-    // Without the mouse, the camera drifts in behind the walk.
-    if (!look.recent && !aiming && Math.abs(f.fwd) + Math.abs(f.side) > 0.1 && !inside) camYaw += angleWrap(walker.yaw - camYaw) * Math.min(1, dt * 1.2);
+    // Let go of the mouse and the camera swings back in behind the character.
+    lookIdle = look.held || aiming ? 0 : lookIdle + dt;
+    if (lookIdle > 0.15) {
+      const k = Math.min(1, dt * 3);
+      camYaw += angleWrap(walker.yaw - camYaw) * k;
+      camPitch += (CAM_PITCH - camPitch) * k;
+    }
     const obs = inside ? [] : [{ x: player.x, z: player.z, fx: -Math.sin(player.yaw), fz: -Math.cos(player.yaw), hl: player.hl, hw: player.hw }];
     if (!inside) for (const c of traffic.cars) if (Math.abs(c.x - walker.x) < 6 && Math.abs(c.z - walker.z) < 6) obs.push({ x: c.x, z: c.z, fx: -Math.sin(c.yaw), fz: -Math.cos(c.yaw), hl: c.hl, hw: c.hw });
     walker.step(dt, { mx: fx * f.fwd + rx * f.side, mz: fz * f.fwd + rz * f.side, run: f.run, face: aiming || arsenal.act > 0 ? camYaw : null }, obs);
@@ -1228,15 +1237,27 @@ function updateCamera(dt) {
   const spd = p.speed;
   const moveYaw = spd > 4 && p.fwdSpeed < -2 ? p.yaw + Math.PI : p.yaw;
   camYaw += angleWrap(moveYaw - camYaw) * Math.min(1, dt * (camMode === 2 ? 20 : 3.2));
-  const cfx = -Math.sin(camYaw), cfz = -Math.cos(camYaw);
+  // Hold a mouse button to look around the car; let go and it swings back behind.
+  const lk = state === "play" ? input.look(dt, false) : { x: 0, y: 0, held: false };
+  if (lk.held) {
+    carLook.idle = 0;
+    carLook.yaw = angleWrap(carLook.yaw - lk.x * 0.0026);
+    carLook.pitch = clamp(carLook.pitch - lk.y * 0.0022, -0.35, 0.6);
+  } else if ((carLook.idle += dt) > 0.15) {
+    const k = Math.min(1, dt * 3);
+    carLook.yaw -= carLook.yaw * k; carLook.pitch -= carLook.pitch * k;
+  }
+  const viewYaw = camYaw + carLook.yaw;
+  const cfx = -Math.sin(viewYaw), cfz = -Math.cos(viewYaw);
   let target, look;
   if (camMode === 2) {
     target = new THREE.Vector3(p.x + fx * 0.3, p.y + 1.15, p.z + fz * 0.3);
-    look = new THREE.Vector3(p.x + fx * 20, p.y + 1.0, p.z + fz * 20);
+    const ly = p.yaw + carLook.yaw;
+    look = new THREE.Vector3(target.x - Math.sin(ly) * 20, p.y + 1.0 + Math.sin(carLook.pitch) * 20, target.z - Math.cos(ly) * 20);
     camPos.copy(target);
   } else {
     const dist = camMode === 0 ? 7.2 : 11.5, h = camMode === 0 ? 2.5 : 3.8;
-    target = new THREE.Vector3(p.x - cfx * dist, p.y + h, p.z - cfz * dist);
+    target = new THREE.Vector3(p.x - cfx * dist, p.y + h - Math.sin(carLook.pitch) * dist * 0.9, p.z - cfz * dist);
     // Keep the camera out of buildings.
     const steps = 10;
     for (let i = 1; i <= steps; i++) {
@@ -1247,7 +1268,7 @@ function updateCamera(dt) {
     const gy = world.ground(target.x, target.z, target.y) + 0.8;
     if (target.y < gy) target.y = gy;
     camPos.lerp(target, Math.min(1, dt * 10));
-    look = new THREE.Vector3(p.x + cfx * 3, p.y + 1.25, p.z + cfz * 3);
+    look = new THREE.Vector3(p.x + cfx * 3, p.y + 1.25 + Math.sin(carLook.pitch) * 4, p.z + cfz * 3);
   }
   camera.position.copy(camPos);
   addShake(dt);

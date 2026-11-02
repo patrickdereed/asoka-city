@@ -47,8 +47,9 @@ All of them are on the map (M) and the minimap. Walk up to a door and press E. I
 `interiors.js`; venues are planned in `map.js` (`planVenues`), so every one is placed deterministically.
 
 The arsenal (`weapons.js`) runs from a bat to a rotary minigun: pistols, SMGs, shotguns, rifles, scoped
-rifles, a light machine gun, grenade and rocket launchers, and grenades. Click the city to look with the
-mouse; right button aims over the shoulder, left fires, Q or the wheel changes weapon, R reloads. People
+rifles, a light machine gun, grenade and rocket launchers, and grenades. Hold a mouse button to look around
+(on foot or in the car); let go and the camera swings back behind you. The right button aims over the
+shoulder, left fires, Q or the wheel changes weapon, R reloads. People
 hit hard enough are knocked down (no blood); everyone nearby runs. Cars can be disabled and set alight.
 
 ## The city
@@ -67,6 +68,15 @@ hit hard enough are knocked down (no blood); everyone nearby runs. Cars can be d
 
 About 358 km of road, 21,500 buildings and 19 bridges. The river runs north to south through the
 hills and the docks.
+
+Buildings are boxes dressed in the shader and with a little geometry. The building shader gives towers
+and offices shopfronts and lobbies at street level (bays with doors, signs and lit interiors), houses front
+doors with porch lights, and every other floor recessed windows: the glass sits back from the wall, so the
+reveals, sills and the lintel's shadow move with the view. Walls are painted brick or stone coursing, with
+rain streaks under the sills. `detailBuilding` in `render.js` adds corner piers and pilasters, art deco
+crowns, steel fins and a lit crown line on the glass towers, balconies and cornices on houses, chimneys
+on pitched roofs, and air-con units, vents, stair housings and masts on flat roofs. Pedestrians collide
+with the same building, lamp and tree colliders as the player.
 
 ## People
 

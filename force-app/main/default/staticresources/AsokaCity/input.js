@@ -15,11 +15,11 @@ export class Input {
     });
     addEventListener("keyup", (e) => this.down.delete(e.code));
     addEventListener("blur", () => { this.down.clear(); this.buttons.clear(); });
-    // Mouse: look (pointer lock when granted, otherwise drag with the right button), buttons, wheel.
+    // Mouse: look only while a button is held (pointer lock while held when granted), buttons, wheel.
     this.buttons = new Set(); this.clicks = new Set();
     this.mdx = 0; this.mdy = 0; this.wheel = 0; this.lastMouse = 0;
     addEventListener("mousemove", (e) => {
-      if (document.pointerLockElement || this.buttons.has(2)) { this.mdx += e.movementX || 0; this.mdy += e.movementY || 0; this.lastMouse = performance.now(); }
+      if (this.buttons.size) { this.mdx += e.movementX || 0; this.mdy += e.movementY || 0; this.lastMouse = performance.now(); }
     });
     addEventListener("mousedown", (e) => {
       if (e.target && e.target.closest && e.target.closest("button, input, select, .shop, .creator")) return;
@@ -32,8 +32,9 @@ export class Input {
     addEventListener("wheel", (e) => { this.wheel += Math.sign(e.deltaY); }, { passive: true });
   }
 
-  // Mouse look since the last call, in pixels; the right stick counts too.
-  look(dt) {
+  // Mouse look since the last call, in pixels; the right stick counts too, and the arrow keys
+  // unless they're steering. held: the player is looking around right now.
+  look(dt, keys = true) {
     let x = this.mdx, y = this.mdy;
     this.mdx = 0; this.mdy = 0;
     const p = this.pad();
@@ -42,9 +43,11 @@ export class Input {
       if (Math.abs(rx) > 0.15) x += rx * 900 * dt;
       if (Math.abs(ry) > 0.15) y += ry * 600 * dt;
     }
-    if (this.down.has("ArrowLeft")) x -= 700 * dt;
-    if (this.down.has("ArrowRight")) x += 700 * dt;
-    return { x, y, recent: performance.now() - this.lastMouse < 1500 || (p && Math.hypot(p.axes[2] || 0, p.axes[3] || 0) > 0.15) };
+    const arrows = keys && (this.down.has("ArrowLeft") || this.down.has("ArrowRight"));
+    if (keys && this.down.has("ArrowLeft")) x -= 700 * dt;
+    if (keys && this.down.has("ArrowRight")) x += 700 * dt;
+    const stick = !!(p && Math.hypot(p.axes[2] || 0, p.axes[3] || 0) > 0.15);
+    return { x, y, held: this.buttons.size > 0 || stick || arrows, recent: performance.now() - this.lastMouse < 1500 || stick };
   }
 
   // Combat buttons: aim (right mouse, left trigger), fire (left mouse, right trigger, Space on foot).

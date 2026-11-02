@@ -211,7 +211,7 @@ vec3 room(vec2 cell, float cw, float fh, vec3 V, vec3 n, vec3 t, float h, out fl
     c = wallC * .8;
     glow = .65;
   }
-  glow *= mix(.6, 1., hit.y / fh);
+  glow *= mix(.6, 1., hit.y / max(fh, .01));
   return c;
 }
 
@@ -259,24 +259,62 @@ void main() {
     else if (st == 7.) { wr = vec4(.04, .96, .05, .97); avg = .85; litP = .12; }
     else if (st == 8.) { wr = fl < .5 ? vec4(.05, .95, .05, .9) : vec4(.25, .75, .3, .8); avg = .45; litP = .7; }
     if (st != 5. && st != 4.) wall *= mix(.6, 1., smoothstep(0., 5., uv.y));
+    float cw = CW[si];
+    vec2 m = vec2(uv.x * cw, uv.y);   // metres along the face and up from the ground
+    // Wall finish: painted brick on houses and some offices, stone coursing on the rest.
+    if ((st == 3. && seed < .6) || (st == 2. && seed < .45) || (st == 8. && seed > .7)) {
+      float row = floor(m.y / .15), bx = m.x / .36 + .5 * mod(row, 2.);
+      vec2 bf = vec2(fract(bx), fract(m.y / .15));
+      float mortar = max(step(bf.x, .06), step(bf.y, .12));
+      float f = clamp(1. - 2.5 * max(fwidth(bx), fwidth(m.y / .15)), 0., 1.);
+      wall *= mix(1., mix(.88 + .18 * hash12(vec2(floor(bx), row) + seed), 1.1, mortar), f);
+    } else if (st == 2. || st == 6. || (st == 1. && seed > .5)) {
+      float row = floor(m.y / .6), bx = m.x / 1.2 + .5 * mod(row, 2.);
+      vec2 bf = vec2(fract(bx), fract(m.y / .6));
+      float joint = max(step(bf.x, .015), step(bf.y, .03));
+      float f = clamp(1. - 2. * max(fwidth(bx), fwidth(m.y / .6)), 0., 1.);
+      wall *= mix(1., mix(.95 + .07 * hash12(vec2(floor(bx), row) + seed), .8, joint), f);
+    }
+    // Rain streaks running down from the sills.
+    if (st != 0. && st != 7. && st != 4. && st != 5.) {
+      float colX = step(wr.x + .05, cxF) * step(cxF, wr.y - .05);
+      float below = fyF < wr.z ? (wr.z - fyF) * fh : 0.;
+      float streak = colX * step(.001, below) * smoothstep(1.6, 0., below) * smoothstep(.3, .8, vnoise(vec2((cx + cxF) * 9., uv.y * .35) + seed * 17.));
+      wall *= 1. - .25 * streak;
+    }
+    // Windows sit back in the wall: the view ray through the opening meets the glass further
+    // in, so you see the reveals at an angle, a lit sill below and the lintel's shadow on the glass.
+    float recess = st == 0. || st == 7. ? 0. : st == 3. || st == 8. ? .16 : .24;
+    vec3 t = vec3(-n.z, 0., n.x);
+    float vn = max(-dot(V, n), .2);
+    vec2 pm = vec2(cxF * cw, fyF * fh);
+    vec2 gp = pm + vec2(dot(V, t), V.y) / vn * recess;
+    vec4 wm = vec4(wr.x * cw, wr.y * cw, wr.z * fh, wr.w * fh);
     float win = step(wr.x, cxF) * step(cxF, wr.y) * step(wr.z, fyF) * step(fyF, wr.w);
-    float frame = win * (1. - step(wr.x + .03, cxF) * step(cxF, wr.y - .03) * step(wr.z + .04, fyF) * step(fyF, wr.w - .04));
+    float onGlass = win * step(wm.x, gp.x) * step(gp.x, wm.y) * step(wm.z, gp.y) * step(gp.y, wm.w);
+    float reveal = win * (1. - onGlass);
+    float fw = .055;
+    float frame = onGlass * (1. - step(wm.x + fw, gp.x) * step(gp.x, wm.y - fw) * step(wm.z + fw, gp.y) * step(gp.y, wm.w - fw));
+    if (wm.y - wm.x > 1.5 && st != 0. && st != 7.) frame = max(frame, onGlass * step(abs(gp.x - (wm.x + wm.y) * .5), .035));
+    if (st == 1. || st == 8.) frame = max(frame, onGlass * step(abs(gp.y - mix(wm.z, wm.w, .72)), .03));
+    float sill = recess > 0. && wr.y > wr.x ? step(wm.z - .08, pm.y) * step(pm.y, wm.z) * step(wm.x - .07, pm.x) * step(pm.x, wm.y + .07) : 0.;
+    float underSill = recess > 0. && wr.y > wr.x ? step(wm.z - .2, pm.y) * step(pm.y, wm.z - .08) * step(wm.x - .07, pm.x) * step(pm.x, wm.y + .07) : 0.;
     float aa = clamp(1. - 1.5 * max(fwidth(uv.x), fwidth(fy)), 0., 1.);
     float h = hash12(vec2(cx, fl) + seed * 91.7);
     float lit = step(1. - litP, h);
     vec3 lcol = mix(vec3(1., .72, .4), vec3(.7, .85, 1.), step(.62, hash12(vec2(fl, cx) + seed * 13.1)));
     if (hash12(vec2(cx * 3., fl) + seed) > .97) lcol = vec3(1., .4, .15);
     // Interior seen through the glass.
-    vec3 t = vec3(-n.z, 0., n.x);
-    float cw = CW[si];
-    vec2 cell = vec2((cxF - wr.x) / max(wr.y - wr.x, .01), (fyF - wr.z) / max(wr.w - wr.z, .01));
-    float rg;
-    vec3 rc = room(clamp(cell, 0., 1.), cw * (wr.y - wr.x), fh * (wr.w - wr.z), V, n, t, h, rg);
+    vec2 cell = clamp((gp - wm.xz) / max(wm.yw - wm.xz, vec2(.01)), 0., 1.);
+    float rg = 0.;
+    vec3 rc = vec3(0.);
+    if (wr.y > wr.x) rc = room(cell, cw * (wr.y - wr.x), fh * (wr.w - wr.z), V, n, t, h, rg);
     float blinds = step(.7, hash12(vec2(cx, fl * 1.7) + seed)) * step(1. - fract(h * 13.) * .8, cell.y);
     float slats = blinds * (.6 + .4 * step(.5, fract(cell.y * 18.)));
     vec3 inside = mix(rc, vec3(.85, .82, .76), slats);
     vec3 insideLit = inside * lcol * rg * 2.6 * lit * (.85 + .15 * step(.5, hash12(vec2(cx, fl) + floor(uTime * .1))));
-    vec3 insideDay = inside * amb(n) * .22;
+    float lintel = recess > 0. ? mix(.55, 1., smoothstep(0., .45, wm.w - gp.y)) : 1.;
+    vec3 insideDay = inside * amb(n) * .22 * lintel;
     float fres = .06 + .94 * pow(1. - abs(dot(V, n)), 4.);
     vec3 R = reflect(V, n);
     vec3 refl = skyRefl(R) * (st == 0. || st == 7. ? 1. : .8);
@@ -284,12 +322,72 @@ void main() {
     if (st == 6.) refl = mix(refl, refl * vec3(.4, .9, .95), .4);
     float sunSpec = pow(max(dot(R, uLightDir), 0.), 200.) * sh;
     float glassRefl = st == 0. || st == 7. ? mix(.35, 1., fres) : fres;
-    vec3 glass = mix(insideDay, refl, glassRefl) + uLightCol * sunSpec * 4.;
-    vec3 near = mix(wall * lc, glass, win);
-    near = mix(near, wall * lc * .45, frame);
-    vec3 nearE = insideLit * win * (1. - frame) * (1. - glassRefl * .5) * uNight;
+    vec3 glass = mix(insideDay, refl * lintel, glassRefl) + uLightCol * sunSpec * 4. * lintel;
+    vec3 frameC = st == 0. || st == 7. ? vec3(.05, .06, .07) * lc : st == 3. || st == 8. ? vec3(.85, .83, .78) * lc : wall * lc * .45;
+    float topR = step(wm.w, gp.y), botR = step(gp.y, wm.z);
+    vec3 revealC = wall * lc * mix(.7, .4, topR) * mix(1., 1.3, botR);
+    vec3 near = mix(wall * lc, glass, onGlass);
+    near = mix(near, frameC, frame);
+    near = mix(near, revealC, reveal);
+    near = mix(near, min(wall * 1.25 + .04, vec3(1.)) * lc, sill);
+    near *= 1. - .3 * underSill;
+    vec3 nearE = insideLit * onGlass * (1. - frame) * (1. - glassRefl * .5) * uNight;
     vec3 far = mix(wall * lc, mix(vec3(.02), skyRefl(R), glassRefl * .8), avg);
     vec3 farE = lcol * avg * litP * 1.4 * uNight;
+
+    // Street level: shopfronts and lobbies on the towers and offices, front doors on the houses.
+    if (uv.y < 3.3 && (st < 2.5 || st == 6. || st == 7.)) {
+      float bw = 3.6, bay = floor(m.x / bw), bf = fract(m.x / bw);
+      float shop = floor(bay / 2.), hs = hash12(vec2(shop, seed * 7.3)), hb = hash12(vec2(bay, seed * 3.1));
+      bool tower = st == 0. || st == 7.;
+      vec3 granite = tower ? vec3(.07, .075, .08) : vec3(.2, .19, .18) * (.9 + .2 * nz);
+      float door = step(hb, .3);
+      float gy0 = door > .5 ? 0. : .45, gy1 = 2.55;
+      float pier = 1. - step(.05, bf) * step(bf, .95);
+      vec2 sp = vec2(bf * bw, uv.y);
+      float inGlass = (1. - pier) * step(gy0, uv.y) * step(uv.y, gy1);
+      vec2 sg = sp + vec2(dot(V, t), V.y) / vn * .12;
+      float sframe = inGlass * (1. - step(.24, sg.x) * step(sg.x, bw - .24) * step(gy0 + .07, sg.y) * step(sg.y, gy1 - .07));
+      sframe = max(sframe, inGlass * step(abs(sg.x - bw * .5), .04 + door * .02));
+      if (door < .5) sframe = max(sframe, inGlass * step(abs(sg.y - 2.1), .03));
+      vec3 shopL = mix(vec3(1., .82, .58), vec3(.92, .95, 1.), step(.55, hs));
+      float srg;
+      vec3 src = room(clamp((sg - vec2(.24, gy0)) / vec2(bw - .48, gy1 - gy0), 0., 1.), bw - .48, gy1 - gy0, V, n, t, hs * .8, srg);
+      vec3 shopGlass = mix(src * shopL * (.5 + .4 * srg) * amb(n) * .9, refl, fres * .8) + uLightCol * sunSpec * 3.;
+      float fascia = (1. - pier) * step(gy1 + .07, uv.y);
+      vec3 fcol = tower ? vec3(.1, .11, .12) : lin(hs < .25 ? vec3(.17, .25, .26) : hs < .5 ? vec3(.62, .18, .16) : hs < .75 ? vec3(.12, .2, .36) : vec3(.83, .55, .2));
+      float fx = fract(m.x / (bw * 2.)) * 16.;
+      float letter = fascia * step(2.78, uv.y) * step(uv.y, 3.1) * step(.15, fract(fx)) * step(.45, hash12(vec2(floor(fx), shop + seed))) * step(2., fx) * step(fx, 14.);
+      vec3 sn = granite * lc;
+      sn = mix(sn, shopGlass, inGlass);
+      sn = mix(sn, (tower ? vec3(.05) : vec3(.12, .11, .1)) * lc, sframe);
+      sn = mix(sn, fcol * lc, fascia);
+      sn = mix(sn, vec3(.95, .92, .85) * lc, letter);
+      sn = mix(sn, granite * lc * .8, step(uv.y, .45) * (1. - inGlass));
+      float shopOn = step(.15, hs);
+      vec3 snE = (src * shopL * srg * 2.2 * inGlass * (1. - sframe) * shopOn + letter * shopL * 3.) * uNight + src * shopL * srg * .35 * inGlass * (1. - sframe) * shopOn * (1. - uNight);
+      near = sn; nearE = snE;
+      far = mix(granite * lc, shopL * .25 * amb(n), .55);
+      farE = shopL * .7 * uNight;
+    } else if ((st == 3. || st == 8.) && uv.y < 2.6) {
+      float bay = floor(uv.x), hb = hash12(vec2(bay, seed * 5.7));
+      if (hb < .3) {
+        vec2 dp = vec2(cxF * cw, uv.y);
+        float dx0 = cw * .5 - .55, dx1 = cw * .5 + .55;
+        float inDoor = step(dx0, dp.x) * step(dp.x, dx1) * step(dp.y, 2.2);
+        float edge = inDoor * (1. - step(dx0 + .09, dp.x) * step(dp.x, dx1 - .09) * step(dp.y, 2.11));
+        float pane = inDoor * step(abs(dp.x - cw * .5), .22) * step(1.25, dp.y) * step(dp.y, 1.9);
+        vec3 wood = lin(hb < .1 ? vec3(.17, .25, .26) : hb < .2 ? vec3(.5, .17, .14) : vec3(.33, .22, .14));
+        vec3 dc = mix(wood * (.85 + .15 * step(.5, fract(dp.y * 1.6))), vec3(.92, .9, .85), edge) * lc;
+        dc = mix(dc, vec3(.05), pane);
+        near = mix(near, dc, inDoor);
+        nearE = mix(nearE, vec3(1., .75, .45) * pane * 1.5 * uNight, inDoor);
+        // Porch light.
+        float lamp = step(length(vec2(dp.x - dx1 - .25, dp.y - 1.95)), .09);
+        near = mix(near, vec3(.9, .85, .7) * lc, lamp);
+        nearE += vec3(1., .78, .5) * lamp * 6. * uNight;
+      }
+    }
     col = mix(far, near, aa);
     emi = mix(farE, nearE, aa);
     if (neonI >= 0. && uv.y > top - 1.2 && uv.y < top - .35) {

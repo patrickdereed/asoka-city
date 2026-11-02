@@ -255,6 +255,7 @@ export class Person {
 
 const URBAN = new Set(["console", "uptown", "cadence", "sandbox", "scratch", "preview", "gardens", "meridian", "park", "docks"]);
 const tmp = {};
+const PED_R = 0.32;
 
 export class Crowd {
   constructor(world, scene, U, districtAt) {
@@ -402,6 +403,7 @@ export class Crowd {
         const dx = p.x - walker.x, dz = p.z - walker.z, d = Math.hypot(dx, dz);
         if (d < 0.7 && d > 1e-3) { p.x += (dx / d) * (0.7 - d); p.z += (dz / d) * (0.7 - d); }
       }
+      this.solid(p);
       p.y = lerp(p.y, this.w.height(p.x, p.z) + 0.15, Math.min(1, dt * 8));
       p.person.holder.position.set(p.x, p.y, p.z);
       p.person.holder.rotation.y = p.yaw;
@@ -409,9 +411,47 @@ export class Crowd {
     }
   }
 
-  // After dodging, carry on along the nearest pavement.
+  // Walls, lamp posts and trees push people out, the same way they stop the player.
+  solid(p) {
+    const cx = Math.floor((p.x + HALF) / CHUNK), cz = Math.floor((p.z + HALF) / CHUNK);
+    if (cx < 0 || cz < 0 || cx >= NCH || cz >= NCH) return;
+    const c = this.w.chunk(cx, cz);
+    const i = clamp(Math.floor((p.x - c.x0) / 32), 0, 7), j = clamp(Math.floor((p.z - c.z0) / 32), 0, 7);
+    for (const o of c.grid[i + j * 8]) {
+      if (o.down) continue;
+      if (o.r != null) {
+        const dx = p.x - o.x, dz = p.z - o.z, d = Math.hypot(dx, dz), m = o.r + PED_R;
+        if (d < m && d > 1e-4) { p.x = o.x + (dx / d) * m; p.z = o.z + (dz / d) * m; }
+      } else if (p.y < o.y1 - 0.35) {
+        const px = clamp(p.x, o.x0, o.x1), pz = clamp(p.z, o.z0, o.z1);
+        const dx = p.x - px, dz = p.z - pz, d = Math.hypot(dx, dz);
+        if (d >= PED_R) continue;
+        if (d > 1e-4) { p.x = px + (dx / d) * PED_R; p.z = pz + (dz / d) * PED_R; }
+        else {
+          const e = [p.x - o.x0, o.x1 - p.x, p.z - o.z0, o.z1 - p.z], k = e.indexOf(Math.min(...e));
+          if (k === 0) p.x = o.x0 - PED_R; else if (k === 1) p.x = o.x1 + PED_R; else if (k === 2) p.z = o.z0 - PED_R; else p.z = o.z1 + PED_R;
+        }
+      }
+    }
+  }
+
+  // The point on the person's current road closest to where they are now.
+  onEdge(p) {
+    const e = p.e;
+    let best = 0, bd = Infinity;
+    for (let k = 0; k < e.s.length - 1; k++) {
+      const ax = e.x[k], az = e.z[k], dx = e.x[k + 1] - ax, dz = e.z[k + 1] - az, l2 = dx * dx + dz * dz || 1;
+      const t = clamp(((p.x - ax) * dx + (p.z - az) * dz) / l2, 0, 1);
+      const d = Math.hypot(ax + dx * t - p.x, az + dz * t - p.z);
+      if (d < bd) { bd = d; best = lerp(e.s[k], e.s[k + 1], t); }
+    }
+    return { e, s: clamp(best, e.sA, e.sB) };
+  }
+
+  // After dodging, carry on along the pavement they were on (the nearest road can be
+  // behind a building); people with no pavement yet take the nearest road.
   rejoin(p) {
-    const n = this.w.nearestRoad(p.x, p.z, true);
+    const n = p.e ? this.onEdge(p) : this.w.nearestRoad(p.x, p.z, true);
     if (!n) return;
     p.e = n.e; p.s = n.s;
     const pt = this.w.edgePoint(n.e, n.s, 0);
