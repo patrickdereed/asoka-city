@@ -77,7 +77,13 @@ converted with `tools/convert-people.html` and 11 business avatars shared with D
 create your character: a name, man / woman / non-binary, the pronouns the story uses, and any of the
 31 looks. Press F to get out of the car and walk (Shift to jog), F again by the car to drive. F next to
 any other car takes it: traffic drivers get dragged out (and the pavement scatters), parked cars get
-hot-wired, and the car you were in stays at the kerb until it's shunted or left behind. Each avatar is
+hot-wired, and the car you were in stays at the kerb until it's shunted or left behind. Getting in and out
+goes through the driver's door (the left, as traffic drives on the right): `splitDoor` cuts each model's
+front door out of the baked body once, by whole triangles inside the panel behind the front wheel arch, and
+it swings on its front hinge while you open it, haul the driver out by the collar (they go down on the road,
+get up and run off down the pavement) and climb in. Press ? any time for every control (keyboard, mouse and
+gamepad); Esc pauses, with the same list and brightness and contrast sliders, saved per player and applied
+in the final pass (`post.js`). Each avatar is
 turned to face square to its hips and shoulders, not its splayed feet, so it runs straight.
 
 After dark the ten nearest lights are real: street lamps as point lights and headlights as spots

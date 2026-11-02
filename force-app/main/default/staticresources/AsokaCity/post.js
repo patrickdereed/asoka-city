@@ -44,7 +44,7 @@ void main() {
 
 const COMPOSITE = /* glsl */ `
 uniform sampler2D tScene; uniform sampler2D tBloom; uniform float uBloom; uniform float uExposure;
-uniform float uTime; uniform vec2 uRes; uniform float uVignette; uniform float uGrade;
+uniform float uTime; uniform vec2 uRes; uniform float uVignette; uniform float uGrade; uniform float uBright; uniform float uContrast;
 varying vec2 vUv;
 vec3 aces(vec3 x) {
   const mat3 m1 = mat3(.59719, .07600, .02840, .35458, .90834, .13383, .04823, .01566, .83777);
@@ -58,13 +58,16 @@ float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.545
 void main() {
   vec3 c = texture2D(tScene, vUv).rgb;
   c += texture2D(tBloom, vUv).rgb * uBloom;
-  c = aces(c * uExposure);
-  c = pow(c, vec3(1. / 2.2));
+  // The player's brightness setting: half as more exposure, half as a lift in the shadows.
+  float b = sqrt(uBright);
+  c = aces(c * uExposure * b);
+  c = pow(c, vec3(1. / (2.2 * b)));
   // Asoka grade: spruce in the shadows, warm cream in the highlights.
   float l = dot(c, vec3(.2126, .7152, .0722));
   c = mix(c, c * vec3(.9, 1.03, 1.05), (1. - l) * .35 * uGrade);
   c = mix(c, c * vec3(1.05, 1.0, .93), l * .3 * uGrade);
   c = mix(vec3(l), c, 1. + .1 * uGrade);
+  c = clamp((c - .5) * uContrast + .5, 0., 1.);
   vec2 q = vUv - .5;
   c *= 1. - uVignette * dot(q, q) * 1.6;
   c += (hash(vUv * uRes + fract(uTime)) - .5) / 255.;
@@ -89,7 +92,9 @@ export class Post {
     this.comp = mk(COMPOSITE, {
       tScene: { value: null }, tBloom: { value: null }, uBloom: { value: 0.55 }, uExposure: { value: 1 },
       uTime: { value: 0 }, uRes: { value: new THREE.Vector2() }, uVignette: { value: 0.32 }, uGrade: { value: 1 },
+      uBright: { value: 1 }, uContrast: { value: 1 },
     });
+    this.bright = 1; this.contrast = 1;
     this.levels = 6;
     this.samples = 4;
     this.size = new THREE.Vector2();
@@ -153,6 +158,7 @@ export class Post {
     u.tBloom.value = this.mips[0].texture;
     u.uBloom.value = bloomOn ? 0.5 : 0;
     u.uExposure.value = exposure;
+    u.uBright.value = this.bright; u.uContrast.value = this.contrast;
     u.uTime.value = time;
     this.pass(this.comp, null);
     r.autoClear = auto;

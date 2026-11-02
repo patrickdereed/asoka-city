@@ -76,6 +76,7 @@ let hour = 18.0, time = 0, camMode = 0, camYaw = 0, camPitch = -0.12, camPos = n
 let state = "loading", acc = 0, last = performance.now(), mapOpen = false;
 let inside = null, shop = null, previewMesh = null, hitT = 0, aimPoint = new THREE.Vector3(), creatorSpin = 0, fade, saveT = 0;
 let cashMesh, boards = new Map(), deadT = 0, pmat, carNow = { k: -1, color: null, livery: true };
+let doorPivot = null, doorInfo = null, doorOpen = 0, jack = null, thrown = [], timeScale = 1;
 
 async function boot() {
   setLoading("Generating Asoka City");
@@ -90,6 +91,7 @@ async function boot() {
   const signTex = await makeSignTexture();
   city = new CityView(world, scene, mats, makeSignMaterial(U, signTex));
   post = new Post(renderer);
+  applyPicture();
   applyQuality();
   scene.add(buildTower(world, mats));
   const mapImg = drawMapImage(world);
@@ -245,7 +247,7 @@ function showTitle() {
           <li><kbd>E</kbd> enter, shop, use</li><li>Mouse: look, aim (right), fire (left)</li><li><kbd>Q</kbd> or wheel: weapon</li>
           <li><kbd>R</kbd> reload (on foot) / reset car</li><li><kbd>Shift</kbd> jog</li><li><kbd>C</kbd> camera · <kbd>M</kbd> map</li><li><kbd>H</kbd> horn · <kbd>[</kbd><kbd>]</kbd> time</li>
         </ul>
-        <p class="fine">Click the city to steer the camera with the mouse. Gamepads: sticks move and look, triggers aim and fire, X to use.</p>
+        <p class="fine">Click the city to steer the camera with the mouse. Gamepads: sticks move and look, triggers aim and fire, X to use. Press <kbd>?</kbd> in the city for every control, and Esc for brightness and contrast.</p>
       </div>
     </div>`;
   ui.classList.remove("hidden");
@@ -275,6 +277,51 @@ function startAtHome(v) {
   hud.toast(`Back at your ${v.name}. Your car is parked on the street.`, 5);
 }
 
+// Every control, for the pause menu and the in-game list (? key): keyboard and mouse, gamepad, what it does.
+const CONTROLS = [
+  ["On foot", [["W A S D", "Left stick", "Walk"], ["Shift", "A", "Jog"], ["Mouse, ← →", "Right stick", "Look"], ["Right mouse, K", "LT", "Aim"],
+    ["Left mouse, Space", "RT", "Fire, punch"], ["R", "B", "Reload"], ["Q, Z, wheel", "RB, LB", "Next, previous weapon"], ["1 to 8, 0", "", "Weapon slot, fists"],
+    ["E", "X", "Go into a shop or home, use"], ["F", "Y", "Get in, steal or break into a car"]]],
+  ["Driving", [["W, ↑", "RT", "Accelerate"], ["S, ↓", "LT", "Brake, reverse"], ["A D, ← →", "Left stick", "Steer"], ["Space", "A", "Handbrake"],
+    ["H", "", "Horn"], ["F", "Y", "Get out"], ["R", "B", "Back on the road"]]],
+  ["Any time", [["C", "", "Camera"], ["M", "Back", "Map"], ["[ ]", "", "Hour back, forward"], ["?", "", "Show or hide this list"], ["Esc", "Start", "Pause, picture settings"]]],
+];
+const keyCaps = (t) => t ? t.split(", ").map((k) => `<kbd>${esc(k)}</kbd>`).join(" ") : "";
+function controlsHTML() {
+  const sec = ([h, rows]) => `<h3>${h}</h3><table>${rows.map(([k, p, what]) => `<tr><td>${keyCaps(k)}</td><td class="pad">${keyCaps(p)}</td><td>${what}</td></tr>`).join("")}</table>`;
+  return `<div class="ctl"><section>${sec(CONTROLS[0])}</section><section>${CONTROLS.slice(1).map(sec).join("")}</section></div>`;
+}
+
+// The in-game list: stays up over play until ? again.
+let keysPanel = null;
+function toggleKeys(on = !keysPanel || keysPanel.classList.contains("hidden")) {
+  if (!keysPanel) {
+    keysPanel = document.createElement("div");
+    keysPanel.className = "keys-panel hidden";
+    keysPanel.innerHTML = `<div class="kp-head"><b>Controls</b><span><kbd>?</kbd> to hide</span></div>${controlsHTML()}`;
+    $("ac").appendChild(keysPanel);
+  }
+  keysPanel.classList.toggle("hidden", !on);
+}
+
+// Picture settings, kept per player: brightness and contrast on top of the time of day's own exposure.
+function applyPicture() {
+  post.bright = prefs.bright || 1;
+  post.contrast = prefs.contrast || 1;
+}
+const pct = (v) => `${Math.round(v * 100)}%`;
+
+function showControls() {
+  ui.innerHTML = `
+    <div class="title"><div class="title-card wide">
+      <h2>Controls</h2>
+      ${controlsHTML()}
+      <p class="fine">Press <kbd>?</kbd> while you play to see this list without pausing.</p>
+      <button class="btn primary" id="k-back">Back</button>
+    </div></div>`;
+  $("k-back").onclick = showPause;
+}
+
 function showPause() {
   state = "pause";
   releaseMouse();
@@ -283,8 +330,14 @@ function showPause() {
       ${LOGO}<h2>Paused</h2>
       <button class="btn primary" id="p-go">Resume</button>
       <button class="btn" id="p-map">Map</button>
+      <button class="btn" id="p-keys">Controls</button>
       <button class="btn" id="p-reset">Put the car back on the road</button>
       <button class="btn" id="p-char">Change your character</button>
+      <div class="pic">
+        <label>Brightness <input type="range" id="p-bright" min="0.5" max="2.5" step="0.05" value="${prefs.bright || 1}"><span id="p-bright-v">${pct(prefs.bright || 1)}</span></label>
+        <label>Contrast <input type="range" id="p-con" min="0.6" max="1.5" step="0.05" value="${prefs.contrast || 1}"><span id="p-con-v">${pct(prefs.contrast || 1)}</span></label>
+        <button class="btn mini" id="p-pic">Reset picture</button>
+      </div>
       <div class="title-row">
         <label>Detail <select id="p-q">${Object.keys(QUALITY).map((k) => `<option ${k === prefs.quality ? "selected" : ""}>${k}</option>`).join("")}</select></label>
         <label>Time <select id="p-time"><option value="">Keep</option><option value="6.4">Sunrise</option><option value="12">Midday</option><option value="18">Golden hour</option><option value="21.5">Night</option></select></label>
@@ -295,6 +348,13 @@ function showPause() {
   $("p-go").onclick = resume;
   $("p-map").onclick = () => { resume(); toggleMap(true); };
   $("p-reset").onclick = () => { respawn(); resume(); };
+  $("p-keys").onclick = showControls;
+  const pic = (id, key) => {
+    $(id).oninput = (e) => { prefs[key] = parseFloat(e.target.value); $(`${id}-v`).textContent = pct(prefs[key]); applyPicture(); };
+    $(id).onchange = savePrefs;
+  };
+  pic("p-bright", "bright"); pic("p-con", "contrast");
+  $("p-pic").onclick = () => { prefs.bright = 1; prefs.contrast = 1; savePrefs(); applyPicture(); showPause(); };
   $("p-char").onclick = () => showCreator(true);
   $("p-q").onchange = (e) => { prefs.quality = e.target.value; savePrefs(); applyQuality(); };
   $("p-time").onchange = (e) => { if (e.target.value) hour = parseFloat(e.target.value); };
@@ -316,7 +376,7 @@ async function setCharacter(lookId) {
   me = p;
   me.holder.visible = vis;
   (parent || scene).add(me.holder);
-  me.arms = (person) => (mode === "foot" && state !== "creator" ? arsenal.pose(person) : null);
+  me.arms = (person) => (mode === "foot" && state !== "creator" ? (jack ? jackArms(person) : arsenal.pose(person)) : null);
   walker.person = me;
 }
 
@@ -452,13 +512,23 @@ function releaseMouse() { if (document.pointerLockElement) document.exitPointerL
 // Get out of the car on the driver's side, or back in when close to it.
 // ------------------------------------------------------------------------------------- cars
 
-// The player's car body and its four spinning wheels (front pair first, for steering).
-function carBody(body, spots, wheelGeo) {
+// The player's car body and its four spinning wheels (front pair first, for steering), with the driver's
+// door on its own hinge when the model has one.
+function carBody(body, spots, wheelGeo, split = null) {
   for (const c of [...playerMesh.children]) playerMesh.remove(c);
   wheels = [];
-  const m = new THREE.Mesh(body, pmat);
+  const m = new THREE.Mesh(split ? split.rest : body, pmat);
   m.layers.enable(1);
   playerMesh.add(m);
+  doorPivot = null; doorInfo = split;
+  if (split) {
+    doorPivot = new THREE.Group();
+    doorPivot.position.set(...split.pivot);
+    const d = new THREE.Mesh(split.door, pmat);
+    d.layers.enable(1);
+    doorPivot.add(d);
+    playerMesh.add(doorPivot);
+  }
   for (const ws of [...spots].sort((p, q) => (q.front ? 1 : 0) - (p.front ? 1 : 0))) {
     const w = new THREE.Mesh(wheelGeo, pmat);
     w.position.set(ws.x, ws.y, ws.z);
@@ -475,7 +545,38 @@ function setPlayerCar(k, color, livery = false) {
   player.setSpec({ ...PLAYER_CAR, L: kit.spec.L, W: kit.spec.W, wr: kit.spec.wr });
   pmat.uniforms.uUseLivery.value = livery ? 1 : 2;
   if (!livery) pmat.uniforms.uPaint.value.set(...hex(color));
-  carBody(kit.body, kit.wheels, kit.wheelGeo);
+  carBody(kit.body, kit.wheels, kit.wheelGeo, splitDoor(kit));
+}
+
+// Cut each model's driver door out of the body, once, so it can swing open. Traffic drives on the right, so
+// the driver sits on the left (-x); the door runs back from the front wheel arch about half way to the rear.
+function splitDoor(kit) {
+  if (kit.split !== undefined) return kit.split;
+  const src = kit.body, A = src.attributes, P = A.position.array;
+  src.computeBoundingBox();
+  const bb = src.boundingBox, wr = kit.spec.wr;
+  const zF = Math.min(...kit.wheels.map((w) => w.z)), zR = Math.max(...kit.wheels.map((w) => w.z));
+  const zA = zF + wr + 0.2, len = clamp((zR - wr - 0.1 - zA) * 0.55, 0.85, 1.2);
+  const x1 = bb.min.x * 0.6, y0 = wr * 0.95, y1 = bb.max.y - 0.07, e = 0.05;
+  // Whole triangles only: a long one reaching past the outline stays on the body rather than tearing off a spike.
+  const inside = (o) => P[o] < x1 && P[o + 2] > zA - e && P[o + 2] < zA + len + e && P[o + 1] > y0 - e && P[o + 1] < y1;
+  const names = Object.keys(A), rest = {}, door = {};
+  for (const n of names) { rest[n] = []; door[n] = []; }
+  for (let t = 0; t < P.length / 9; t++) {
+    const o = t * 9;
+    const out = inside(o) && inside(o + 3) && inside(o + 6) ? door : rest;
+    for (const n of names) { const a = A[n], k = a.itemSize; for (let i = t * 3 * k; i < (t * 3 + 3) * k; i++) out[n].push(a.array[i]); }
+  }
+  if (door.position.length < 90) { kit.split = null; return null; }
+  for (let i = 0; i < door.position.length; i += 3) { door.position[i] -= bb.min.x; door.position[i + 2] -= zA; }
+  const geo = (d) => {
+    const g = new THREE.BufferGeometry();
+    for (const n of names) g.setAttribute(n, new THREE.BufferAttribute(new Float32Array(d[n]), A[n].itemSize));
+    g.computeBoundingSphere();
+    return g;
+  };
+  kit.split = { rest: geo(rest), door: geo(door), pivot: [bb.min.x, 0, zA], hw: -bb.min.x, zA, len };
+  return kit.split;
 }
 
 const parkedKit = (p) => Math.floor(Math.abs(p.x * 7.13 + p.z * 3.71)) % parkedMeshes.length;
@@ -529,8 +630,6 @@ function takeCar(t) {
     next = { k: c.type, color: c.color, livery: !!c.livery, x: c.x, z: c.z, yaw: c.yaw };
     if (t.kind === "traffic") {
       crowd.alarm(c.x, c.z, 25, c.x, c.z);
-      hud.toast("You drag the driver out and take the car.", 2.5);
-      audio.bang(4, "knock");
     }
   }
   const t0 = kits[old.k] && traffic.types.indexOf(kits[old.k].spec);
@@ -545,21 +644,155 @@ function takeCar(t) {
 
 function toggleFoot() {
   if (!me) { hud.toast("Your character is still loading.", 2); return; }
+  if (jack) return;
   if (mode === "drive") {
     if (player.speed > 4) { hud.toast("Slow down to get out.", 2); return; }
-    const rx = Math.cos(player.yaw), rz = -Math.sin(player.yaw);
-    walker.place(player.x - rx * (player.hw + 0.7), player.z - rz * (player.hw + 0.7), player.yaw);
     mode = "foot";
-    me.holder.visible = true;
     camYaw = player.yaw; camPitch = -0.15;
+    startJack("out");
   } else {
     const t = carNear(walker.x, walker.z);
     if (!t) { hud.toast("Walk up to a car to get in.", 2); return; }
     if (t.kind !== "own") takeCar(t);
-    mode = "drive";
-    me.holder.visible = false;
-    releaseMouse();
+    startJack(t.kind === "traffic" ? "traffic" : t.kind === "parked" ? "parked" : "own");
   }
+}
+
+// Getting in and out goes through the driver's door: walk up, open it (forcing it on a parked car, or
+// dragging the driver out of one in traffic), climb in and pull it shut. Times in seconds.
+const JACK = {
+  own: { walk: 0.45, open: [0.45, 0.8], into: [0.8, 1.2], close: [1.15, 1.5] },
+  parked: { walk: 0.45, jimmy: [0.45, 1.1], open: [1.1, 1.45], into: [1.45, 1.85], close: [1.8, 2.15] },
+  traffic: { walk: 0.4, open: [0.4, 0.75], pull: [0.75, 1.2], into: [1.35, 1.75], close: [1.7, 2.05] },
+  out: { walk: 0, open: [0, 0.3], out: [0.15, 0.6], close: [0.65, 0.95] },
+};
+const DOOR_ANGLE = 1.35;
+
+// A point beside the player's car: lx to the right, lz toward the back.
+function carPt(lx, lz) {
+  const s = Math.sin(player.yaw), c = Math.cos(player.yaw);
+  return { x: player.x + c * lx + s * lz, z: player.z - s * lx + c * lz };
+}
+
+function startJack(kind) {
+  jack = { kind, T: JACK[kind], t: 0, x0: walker.x, z0: walker.z, yaw0: walker.yaw, hand: null, hand2: null, handW: 0, snd: 0, driver: null };
+  const d = doorInfo || { hw: player.hw, zA: -0.35, len: 1 };
+  if (kind === "out") { const p = carPt(-d.hw * 0.4, d.zA + 0.6 * d.len); walker.place(p.x, p.z, player.yaw + Math.PI / 2); me.holder.visible = false; }
+  if (kind === "traffic") {
+    // Someone who's already loaded for the pavements, so they're there in time.
+    const ids = crowd.people.map((p) => p.person.id);
+    const id = ids.length ? ids[Math.floor(Math.random() * ids.length)] : PEOPLE[Math.floor(Math.random() * PEOPLE.length)].id;
+    const j = jack;
+    Person.create(id, U).then((p) => {
+      if (!p || jack !== j || j.t > j.T.pull[0]) return;
+      j.driver = p; p.holder.visible = false; scene.add(p.holder);
+    });
+  }
+}
+
+function updateJack(dt) {
+  const j = jack, T = j.T, d = doorInfo || { hw: player.hw, zA: -0.35, len: 1 };
+  j.t += dt;
+  const t = j.t, ph = (r) => (r ? clamp((t - r[0]) / (r[1] - r[0]), 0, 1) : 0), ease = (k) => k * k * (3 - 2 * k);
+  const spot = carPt(-(d.hw + 0.5), d.zA + 1.05 * d.len), seat = carPt(-d.hw * 0.4, d.zA + 0.6 * d.len);
+  const face = player.yaw - Math.PI / 2;
+  doorOpen = ease(ph(T.open)) * (1 - ease(ph(T.close)));
+  // In the seat you sit low, so you climb in and out rather than standing through the roof.
+  let px, pz, sit;
+  if (j.kind === "out") {
+    const k = ease(ph(T.out));
+    px = lerp(seat.x, spot.x, k); pz = lerp(seat.z, spot.z, k);
+    sit = 1 - ease(Math.min(1, k * 1.5));
+    me.holder.visible = t >= T.out[0];
+  } else {
+    const k = ease(clamp(t / T.walk, 0, 1)), ki = ease(ph(T.into));
+    px = lerp(lerp(j.x0, spot.x, k), seat.x, ki); pz = lerp(lerp(j.z0, spot.z, k), seat.z, ki);
+    sit = ease(Math.max(0, ki * 1.5 - 0.5));
+    walker.yaw = j.yaw0 + angleWrap(face - j.yaw0) * k;
+    me.holder.visible = ki < 0.9;
+  }
+  const speed = Math.hypot(px - walker.x, pz - walker.z) / Math.max(dt, 1e-3);
+  walker.x = px; walker.z = pz;
+  me.holder.position.set(walker.x, walker.y - 0.55 * sit, walker.z);
+  me.holder.rotation.y = walker.yaw;
+
+  // Sounds: the lock giving, the door.
+  if (T.jimmy && j.snd === 0 && t > T.jimmy[0] + 0.2) { j.snd = 1; audio.bang(2.5, "knock"); }
+  if (T.jimmy && j.snd === 1 && t > T.jimmy[1] - 0.15) { j.snd = 2; audio.bang(4, "knock"); }
+  if (j.snd < 3 && t > T.open[0]) { j.snd = 3; audio.bang(1.5, "knock"); }
+  if (j.snd < 4 && t > T.close[1] - 0.08) { j.snd = 4; audio.bang(3, "knock"); }
+
+  // The driver: hauled out past the open door, then thrown down on the road.
+  const D = j.driver;
+  if (D && T.pull) {
+    const k = ph(T.pull);
+    D.holder.visible = t >= T.pull[0];
+    const from = carPt(-d.hw * 0.4, d.zA + 0.62 * d.len), to = carPt(-(d.hw + 1.25), d.zA + 0.62 * d.len);
+    const x = lerp(from.x, to.x, ease(k)), z = lerp(from.z, to.z, ease(k));
+    D.holder.position.set(x, world.height(x, z) + 0.15 - 0.55 * (1 - ease(Math.min(1, k * 1.6))), z);
+    D.holder.rotation.set(0, face, 0);
+    D.update(dt, 0);
+    D.holder.updateMatrixWorld(true);
+    if (k >= 1) {
+      const ax = to.x - from.x, az = to.z - from.z, l = Math.hypot(ax, az) || 1;
+      thrown.push({ person: D, t: 0, x, z, y: world.height(x, z) + 0.15, vx: (ax / l) * 2.2, vz: (az / l) * 2.2, fallYaw: Math.atan2(ax, az) });
+      j.driver = null;
+      hud.toast("You drag the driver out and take the car.", 2.5);
+    }
+  }
+
+  // Hands: on the door handle while it opens, then on the driver's collar.
+  j.hand = j.hand2 = null; j.handW = 0;
+  const w = (a, b) => clamp(Math.min((t - a) / 0.15, (b - t) / 0.15), 0, 1);
+  if (doorPivot && j.kind !== "out") {
+    const a = T.walk - 0.12, b = T.open[0] + 0.2;
+    if (w(a, b) > 0) { playerMesh.updateMatrixWorld(true); j.hand = doorPivot.localToWorld(new THREE.Vector3(-0.04, 0.95, d.len * 0.85)); j.handW = w(a, b); }
+  }
+  if (D && T.pull && t > T.pull[0] - 0.15 && t < T.pull[1]) {
+    j.hand = D.bones.Bip01_L_UpperArm.getWorldPosition(new THREE.Vector3());
+    j.hand2 = D.bones.Bip01_R_UpperArm.getWorldPosition(new THREE.Vector3());
+    j.handW = w(T.pull[0] - 0.15, T.pull[1]);
+  }
+  me.update(dt, Math.min(speed, 3), 0);
+
+  if (t >= T.close[1]) {
+    jack = null; doorOpen = 0;
+    if (j.kind === "out") walker.place(walker.x, walker.z, walker.yaw);
+    else { mode = "drive"; me.holder.visible = false; releaseMouse(); }
+    if (j.driver) scene.remove(j.driver.holder);
+  }
+}
+
+function jackArms(person) {
+  if (!jack || !jack.hand || jack.handW < 0.01) return null;
+  const F = person.frame();
+  const poleR = F.up.clone().multiplyScalar(-1).addScaledVector(F.right, 0.7).addScaledVector(F.fwd, -0.3);
+  const poleL = F.up.clone().multiplyScalar(-1).addScaledVector(F.right, -0.7).addScaledVector(F.fwd, -0.3);
+  return { w: jack.handW, right: jack.hand, left: jack.hand2, poleR, poleL };
+}
+
+// Drivers you've thrown out: down on the road, back up, then off down the pavement as fast as they can.
+function updateThrown(dt) {
+  thrown = thrown.filter((d) => {
+    d.t += dt;
+    const P = d.person;
+    if (d.t < 2.3) {
+      const slide = Math.max(0, 1 - d.t / 0.45);
+      d.x += d.vx * slide * dt; d.z += d.vz * slide * dt;
+      const fall = Math.min(1, d.t / 0.5), up = clamp((d.t - 1.7) / 0.6, 0, 1);
+      P.down = Math.max(0.001, fall * fall * (1 - up * up));
+      P.holder.rotation.order = "YXZ";
+      P.holder.rotation.set(-P.down * Math.PI / 2, d.fallYaw + Math.PI, 0);
+      P.holder.position.set(d.x, d.y + 0.12 * P.down, d.z);
+      return true;
+    }
+    P.down = 0;
+    P.holder.rotation.set(0, d.fallYaw + Math.PI, 0);
+    const ped = { person: P, e: null, s: 0, walkSide: 1, dir: 1, x: d.x, z: d.z, y: d.y, yaw: d.fallYaw + Math.PI, speed: 1.3, cruise: 1.3, standing: false, flee: 0, fleeX: 0, fleeZ: 0, hp: 100, panic: 12, downT: 0 };
+    crowd.rejoin(ped);
+    if (ped.e) crowd.people.push(ped); else scene.remove(P.holder);
+    return false;
+  });
 }
 
 function toggleMap(open = !mapOpen) {
@@ -768,7 +1001,7 @@ const m4 = new THREE.Matrix4(), q4 = new THREE.Quaternion(), e3 = new THREE.Eule
 
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const dt = Math.min(0.05, (now - last) / 1000) * timeScale;
   last = now;
   if (state === "play" && deadT > 0) {
     deadT -= dt; time += dt;
@@ -814,9 +1047,11 @@ function tick(dt) {
   if (input.hit("BracketLeft")) hour = (hour + 23) % 24;
   if (input.hit("KeyC")) camMode = (camMode + 1) % 3;
   if (input.hit("KeyM", 8)) toggleMap(true);
+  if (input.hit("Slash")) toggleKeys();
   const onFoot = mode === "foot";
   if (input.hit("KeyR", 1)) { if (onFoot) arsenal.reload(); else respawn(); }
-  if (input.hit("KeyF", 3) && !inside) toggleFoot();
+  if (input.hit("KeyF", 3) && !inside && !jack) toggleFoot();
+  updateThrown(dt);
   audio.horn(mode === "drive" && input.down.has("KeyH"));
 
   // Weapons: wheel, Q, number keys, shoulder buttons.
@@ -835,7 +1070,14 @@ function tick(dt) {
   }
   const focus = mode === "drive" ? player : walker;
   let prompt = "", aiming = false;
-  if (onFoot) {
+  if (onFoot && jack) {
+    const look = input.look(dt);
+    camYaw -= look.x * 0.0026;
+    camPitch = clamp(camPitch - look.y * 0.0022, -1.1, 0.75);
+    updateJack(dt);
+    arsenal.place(me, false);
+    combat.player = { x: walker.x, y: walker.y + 1, z: walker.z };
+  } else if (onFoot) {
     const look = input.look(dt);
     camYaw -= look.x * 0.0026;
     camPitch = clamp(camPitch - look.y * 0.0022, -1.1, 0.75);
@@ -1161,6 +1403,7 @@ function render(dt) {
   // Player car
   playerMesh.position.set(player.x, player.y, player.z);
   playerMesh.rotation.set(player.pitch, player.yaw, player.roll);
+  if (doorPivot) doorPivot.rotation.y = -DOOR_ANGLE * doorOpen;
   wheels.forEach((w, i) => {
     w.rotation.x = -player.spin;
     w.rotation.y = i < 2 ? player.steer : 0;
@@ -1274,5 +1517,5 @@ window.__ac = {
   get world() { return world; }, get player() { return player; }, get traffic() { return traffic; }, get city() { return city; }, setHour: (h) => (hour = h), get renderer() { return renderer; },
   save, get arsenal() { return arsenal; }, get combat() { return combat; }, get inside() { return inside; }, enterVenue: (v) => enterVenue(v), leaveVenue: () => leaveVenue(), showShop: (k) => showShop(k), closeShop: () => closeShop(),
   setCam: (yaw, pitch) => { camYaw = yaw; camPitch = pitch; }, get state() { return state; }, holdCam: (h) => { camHold = h; },
-  showCreator: (p) => showCreator(p), dress: (s) => dress(me, s), get prefs() { return prefs; },
+  showCreator: (p) => showCreator(p), set timeScale(k) { timeScale = k; }, get jack() { return jack; }, dress: (s) => dress(me, s), get prefs() { return prefs; },
 };

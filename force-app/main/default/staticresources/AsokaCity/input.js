@@ -8,7 +8,8 @@ export class Input {
     this.steerK = 0;
     this.padPrev = [];
     addEventListener("keydown", (e) => {
-      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space"].includes(e.code)) e.preventDefault();
+      const typing = e.target && e.target.closest && e.target.closest("input, textarea, select");
+      if (!typing && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "Slash"].includes(e.code)) e.preventDefault();
       if (!this.down.has(e.code)) this.hits.add(e.code);
       this.down.add(e.code);
     });
