@@ -9,6 +9,9 @@ import { CAR_TYPES, trafficGeometry } from "./cars.js";
 
 // ------------------------------------------------------------------------------- uniforms
 
+// Real lights the shaders take (see lamps() in shaders.js).
+export const NLAMP = 10;
+
 export function makeUniforms() {
   const v3 = () => ({ value: new THREE.Vector3() });
   return {
@@ -16,6 +19,9 @@ export function makeUniforms() {
     uSunDir: v3(), uSunGlow: v3(), uMoonDir: v3(), uCam: v3(),
     uFogDen: { value: 0.0004 }, uNight: { value: 0 }, uTime: { value: 0 }, uWet: { value: 0 },
     uShadow: { value: null }, uShadowMat: { value: new THREE.Matrix4() }, uShadowOn: { value: 0 }, uShadowTexel: { value: 1 / 2048 },
+    uPL: { value: Array.from({ length: NLAMP }, () => new THREE.Vector4()) },
+    uPD: { value: Array.from({ length: NLAMP }, () => new THREE.Vector4(0, -1, 0, -2)) },
+    uPC: { value: Array.from({ length: NLAMP }, () => new THREE.Vector3()) },
   };
 }
 

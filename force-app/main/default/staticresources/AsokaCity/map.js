@@ -10,6 +10,7 @@ import { Parts, LANDMARKS, fireEscape, escapeFootprint } from "./structures.js";
 export const SIZE = 8192, HALF = 4096, CHUNK = 256, NCH = 32, GRID = 128, NG = 64;
 export const HRES = 8, HN = SIZE / HRES + 1;
 export const DECK = 4.5;           // bridge and causeway deck height above the sea
+export const ROAD_LIFT = 0.08;     // road surfaces sit this far above the terrain
 const RAMP = 0.06;                 // bridge approach grade
 const AVE_HW = 9, ST_HW = 6, HILL_HW = 5.5;
 
@@ -491,15 +492,15 @@ export class World {
   }
 
   roadY(e, x, z, s, i) {
-    if (e.profile) return e.profile[i] + 0.08;
+    if (e.profile) return e.profile[i] + ROAD_LIFT;
     const h = this.height(x, z);
-    if (!e.bridge) return h + 0.08;
+    if (!e.bridge) return h + ROAD_LIFT;
     const ya = e.a.water ? DECK : this.height(e.a.x, e.a.z);
     const yb = e.b.water ? DECK : this.height(e.b.x, e.b.z);
     const L = Math.hypot(e.pts2[1][0] - e.pts2[0][0], e.pts2[1][1] - e.pts2[0][1]);
     const tA = e.a.water ? 0 : this.trimFor(e.a, e), tB = e.b.water ? 0 : this.trimFor(e.b, e);
     const ramp = Math.min(DECK, ya + Math.max(0, s - tA) * RAMP, yb + Math.max(0, L - tB - s) * RAMP);
-    return Math.max(h, ramp) + 0.08;
+    return Math.max(h, ramp) + ROAD_LIFT;
   }
 
   sampleEdge(e, s) {
@@ -715,11 +716,12 @@ export class World {
             const x = lerp(p.x, q.x, t) - p.tz * off * side, z = lerp(p.z, q.z, t) + p.tx * off * side;
             const type = hsh < 0.04 ? 2 : hsh < 0.12 ? 1 : hsh < 0.16 ? 3 : 0;
             const yaw = Math.atan2(-p.tx * side, -p.tz * side);
-            const y = this.height(x, z);
-            out.parked.push({ x, z, y, yaw, type, color: CAR_COLS[Math.floor(hash2(Math.round(x), Math.round(z), 5) * CAR_COLS.length)] });
+            const y = lerp(p.y, q.y, t);
             const hl = [2.3, 1.95, 2.5, 2.65][type], hw = 1.0;
             const ax = Math.abs(p.tx) > 0.7;
-            out.boxes.push(ax ? { x0: x - hl, z0: z - hw, x1: x + hl, z1: z + hw, y1: y + 1.6 } : { x0: x - hw, z0: z - hl, x1: x + hw, z1: z + hl, y1: y + 1.6 });
+            const box = ax ? { x0: x - hl, z0: z - hw, x1: x + hl, z1: z + hw, y1: y + 1.6 } : { x0: x - hw, z0: z - hl, x1: x + hw, z1: z + hl, y1: y + 1.6 };
+            out.boxes.push(box);
+            out.parked.push({ x, z, y, yaw, type, box, color: CAR_COLS[Math.floor(hash2(Math.round(x), Math.round(z), 5) * CAR_COLS.length)] });
           }
         }
       }

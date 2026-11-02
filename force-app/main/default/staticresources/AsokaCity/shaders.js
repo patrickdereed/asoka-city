@@ -23,6 +23,26 @@ float shadowAt(vec3 wp, vec3 n) {
   vec2 e = min(p.xy, 1. - p.xy);
   return mix(1., s, smoothstep(0., .05, min(e.x, e.y)) * uShadowOn);
 }
+// Street lamps and headlights near the camera (main.js picks them each frame). xyz + range; a spot's
+// direction + cos(cone) in uPD, or w < -1.5 for a lamp lighting all round.
+uniform vec4 uPL[10]; uniform vec4 uPD[10]; uniform vec3 uPC[10];
+vec3 lamps(vec3 wp, vec3 n) {
+  vec3 s = vec3(0.);
+  for (int i = 0; i < 10; i++) {
+    float r = uPL[i].w;
+    if (r <= 0.) continue;
+    vec3 d = uPL[i].xyz - wp;
+    float dl = length(d);
+    if (dl >= r) continue;
+    vec3 l = d / max(dl, .001);
+    float k = 1. - dl / r;
+    bool spot = uPD[i].w > -1.5;
+    float cone = spot ? smoothstep(uPD[i].w, uPD[i].w + .1, dot(-l, uPD[i].xyz)) : 1.;
+    // A headlight's beam is focused, so it carries much further than a bare lamp.
+    s += uPC[i] * (k * k / (1. + dl * dl * (spot ? .004 : .03))) * cone * (max(dot(n, l), 0.) * .8 + .2);
+  }
+  return s;
+}
 vec3 amb(vec3 n) { return mix(uGndAmb, uSkyAmb, n.y * .5 + .5); }
 vec3 light(vec3 n, float sh) { return amb(n) + uLightCol * max(dot(n, uLightDir), 0.) * sh; }
 float fogF(vec3 wp) { float d = length(wp - uCam); return clamp(1. - exp(-d * d * uFogDen * uFogDen), 0., 1.); }
@@ -80,7 +100,7 @@ void main() {
   // Pale paving reads as glare under a strong sun; real stone and concrete reflect far less.
   if (vPat > .5 && vPat < 3.5 || vPat > 4.5) c *= .62;
   float sh = shadowAt(vW, n);
-  vec3 col = c * light(n, sh) + emi;
+  vec3 col = c * (light(n, sh) + lamps(vW, n)) + emi;
   vec3 V = normalize(vW - uCam);
   float fres = pow(1. - abs(V.y), 5.);
   col += skyRefl(reflect(V, n)) * fres * spec * (.15 + uWet * .5);
@@ -135,7 +155,7 @@ void main() {
   c = mix(c, gold, mg * wear);
   vec3 n = vec3(0., 1., 0.);
   float sh = shadowAt(vW, n);
-  vec3 col = c * light(n, sh);
+  vec3 col = c * (light(n, sh) + lamps(vW, n));
   // Wet asphalt: puddles reflect the sky and the sun or moon.
   vec3 V = normalize(vW - uCam);
   float puddle = smoothstep(.45, .7, vnoise(vW.xz * .09) * .7 + vnoise(vW.xz * .5) * .3) * (1. - mw) ;
@@ -202,7 +222,7 @@ void main() {
   vec3 base = vCol;
   float nz = vnoise(vW.xz * .23 + vW.y * .17);
   float sh = shadowAt(vW, n);
-  vec3 lc = light(n, sh);
+  vec3 lc = light(n, sh) + lamps(vW, n);
   vec3 V = normalize(vW - uCam);
   vec3 col; vec3 emi = vec3(0.);
   if (n.y > .5) {
@@ -307,14 +327,15 @@ export const PROP_FS = /* glsl */ `
 ${COMMON}
 ${STD}
 varying float vE; varying float vPaint; varying vec2 vLuv; uniform float uBrake; uniform float uLights; uniform float uGloss;
-uniform sampler2D uLivery; uniform float uUseLivery;
+uniform sampler2D uLivery; uniform float uUseLivery; uniform vec3 uPaint;
 void main() {
   vec3 n = normalize(vN);
   if (!gl_FrontFacing) n = -n;
   float sh = shadowAt(vW, n);
   vec3 alb = vCol;
-  if (uUseLivery > .5 && vPaint > .5) alb = lin(texture2D(uLivery, vLuv).rgb);
-  vec3 col = alb * light(n, sh);
+  if (uUseLivery > 1.5 && vPaint > .5) alb = lin(uPaint);
+  else if (uUseLivery > .5 && vPaint > .5) alb = lin(texture2D(uLivery, vLuv).rgb);
+  vec3 col = alb * (light(n, sh) + lamps(vW, n));
   vec3 V = normalize(vW - uCam);
   if (uGloss > 0.) {
     vec3 R = reflect(V, n);
@@ -422,7 +443,8 @@ void main() {
     float L = min((iPos.y - iG) * 1.6 + 4., dl * .8);
     vec3 along = vec3(dc.x, 0., dc.y), side = vec3(-dc.y, 0., dc.x);
     wp = base + along * (position.y + 1.) * .5 * L + side * position.x * size * .35;
-    a = iP.w * uNight * uWet;
+    // A reflection only streaks at a low angle; seen from above it would be a ladder of ripples.
+    a = iP.w * uNight * uWet * (1. - smoothstep(.25, .6, (uCam.y - base.y) / max(length(uCam - base), .01)));
   } else if (iP.y > .5) {
     vMode = 1.;
     float r = iP.y - 1.;
@@ -448,7 +470,7 @@ void main() {
   if (vMode > 1.5) {
     float across = exp(-vC.x * vC.x * 5.);
     float along = pow(clamp(1. - (vC.y + 1.) * .5, 0., 1.), 1.3);
-    float rip = .75 + .25 * sin(vC.y * 30. + uTime * 3.);
+    float rip = .9 + .1 * sin(vC.y * 14. + uTime * 3.);
     g = across * along * rip * .9;
   } else {
     float d = length(vC);
@@ -517,7 +539,7 @@ void main() {
   n = normalize(mix(n, vec3(0., 1., 0.), uSoft));
   float sh = shadowAt(vW, n);
   vec3 alb = lin(t.rgb);
-  vec3 col = alb * light(n, sh);
+  vec3 col = alb * (light(n, sh) + lamps(vW, n));
   // A little wrap and rim light so faces don't go flat in shade.
   vec3 V = normalize(uCam - vW);
   col += alb * uSkyAmb * pow(1. - max(dot(n, V), 0.), 3.) * .35;

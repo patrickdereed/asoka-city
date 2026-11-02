@@ -75,7 +75,15 @@ converted with `tools/convert-people.html` and 11 business avatars shared with D
 `tools/pack-people.mjs` into `AsokaCityPeople*`. Standing poses are Rocketbox motion capture
 (`AsokaCityMoves`); walking and jogging are generated in `people.js` on the Bip01 rig. At the start you
 create your character: a name, man / woman / non-binary, the pronouns the story uses, and any of the
-31 looks. Press F to get out of the car and walk (Shift to jog), F again by the car to drive.
+31 looks. Press F to get out of the car and walk (Shift to jog), F again by the car to drive. F next to
+any other car takes it: traffic drivers get dragged out (and the pavement scatters), parked cars get
+hot-wired, and the car you were in stays at the kerb until it's shunted or left behind. Each avatar is
+turned to face square to its hips and shoulders, not its splayed feet, so it runs straight.
+
+After dark the ten nearest lights are real: street lamps as point lights and headlights as spots
+(`lamps()` in `shaders.js`, picked each frame by `pickLamps` in `main.js`), lighting the street, the
+buildings, the cars and the people. The glow sprites only paint the bulbs and, further off, the pools.
+Roads sit `ROAD_LIFT` (8 cm) above the terrain, and every car rides on that surface.
 
 Your own features go on top of whichever look you wear, and can be changed any time from the pause menu
 (Change your character). `looks.js` bakes them into the player's own copies of the avatar's geometry and

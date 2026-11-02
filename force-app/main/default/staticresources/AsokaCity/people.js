@@ -164,12 +164,12 @@ export class Person {
     if (idle) { this.idle = this.mixer.clipAction(idle); this.idle.play(); this.idle.time = Math.random() * idle.duration; }
     this.mixer.update(0);
     this.inner.updateMatrixWorld(true);
-    // Face the avatar down -z: its forward is the foot -> toe direction.
+    // Face the avatar down -z: its forward is square to the hips and shoulders (feet splay out, so they'd
+    // turn the body ten degrees off the way it walks).
     const B = this.bones;
-    const foot = B.Bip01_L_Foot, toe = B.Bip01_L_Toe0;
-    const fw = new THREE.Vector3();
-    if (foot && toe) fw.copy(toe.getWorldPosition(tv)).sub(foot.getWorldPosition(tv2)).setY(0).normalize();
-    else fw.set(0, 0, 1);
+    const side = (s) => B[`Bip01_${s}_Thigh`].getWorldPosition(new THREE.Vector3()).add(B[`Bip01_${s}_UpperArm`].getWorldPosition(new THREE.Vector3()));
+    const lr = side("L").sub(side("R")).setY(0).normalize();
+    const fw = new THREE.Vector3(-lr.z, 0, lr.x);
     this.inner.rotation.y = Math.PI - Math.atan2(fw.x, fw.z);
     this.inner.updateMatrixWorld(true);
     // Left is from the right thigh to the left thigh; the gait's swing axis.

@@ -75,7 +75,7 @@ let playerMesh, wheels = [], trafficMeshes = [], parkedMeshes = [], kits = [], c
 let hour = 18.0, time = 0, camMode = 0, camYaw = 0, camPitch = -0.12, camPos = new THREE.Vector3(), shake = 0;
 let state = "loading", acc = 0, last = performance.now(), mapOpen = false;
 let inside = null, shop = null, previewMesh = null, hitT = 0, aimPoint = new THREE.Vector3(), creatorSpin = 0, fade, saveT = 0;
-let cashMesh, boards = new Map(), deadT = 0;
+let cashMesh, boards = new Map(), deadT = 0, pmat, carNow = { k: -1, color: null, livery: true };
 
 async function boot() {
   setLoading("Generating Asoka City");
@@ -113,22 +113,12 @@ async function boot() {
   // Player car
   player = new Vehicle(world, pspec, { knocked: (chunk, c) => city.knock(chunk, c) });
   player.place(SPAWN.x, SPAWN.z, SPAWN.yaw);
-  const pmat = mats.prop.clone();
-  pmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 1 }, uLivery: { value: pkit ? asokaLivery() : null }, uUseLivery: { value: pkit ? 1 : 0 } };
+  pmat = mats.prop.clone();
+  pmat.uniforms = { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 1 }, uLivery: { value: pkit ? asokaLivery() : null }, uUseLivery: { value: pkit ? 1 : 0 }, uPaint: { value: new THREE.Vector3(1, 1, 1) } };
   playerMesh = new THREE.Group();
-  playerMesh.add(new THREE.Mesh(pkit ? pkit.body : playerGeometry(), pmat));
-  const wheelSpots = pkit ? pkit.wheels : [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * (PLAYER_CAR.W / 2 - 0.12), y: PLAYER_CAR.wr, z: sz * (PLAYER_CAR.L / 2 - 0.85), front: sz < 0 }));
-  const wg = pkit ? pkit.wheelGeo : wheelGeometry(PLAYER_CAR.wr);
-  wheelSpots.sort((p, q) => (q.front ? 1 : 0) - (p.front ? 1 : 0));
-  for (const ws of wheelSpots) {
-    const w = new THREE.Mesh(wg, pmat);
-    w.position.set(ws.x, ws.y, ws.z);
-    w.rotation.order = "YXZ";
-    w.layers.enable(1);
-    playerMesh.add(w); wheels.push(w);
-  }
-  playerMesh.children[0].layers.enable(1);
   playerMesh.rotation.order = "YXZ";
+  if (pkit) setPlayerCar(kits.indexOf(pkit), null, true);
+  else carBody(playerGeometry(), [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => ({ x: sx * (PLAYER_CAR.W / 2 - 0.12), y: PLAYER_CAR.wr, z: sz * (PLAYER_CAR.L / 2 - 0.85), front: sz < 0 })), wheelGeometry(PLAYER_CAR.wr));
   scene.add(playerMesh);
 
   // Traffic and parked cars: one instanced mesh per body.
@@ -460,6 +450,99 @@ canvas.addEventListener("click", () => {
 function releaseMouse() { if (document.pointerLockElement) document.exitPointerLock(); }
 
 // Get out of the car on the driver's side, or back in when close to it.
+// ------------------------------------------------------------------------------------- cars
+
+// The player's car body and its four spinning wheels (front pair first, for steering).
+function carBody(body, spots, wheelGeo) {
+  for (const c of [...playerMesh.children]) playerMesh.remove(c);
+  wheels = [];
+  const m = new THREE.Mesh(body, pmat);
+  m.layers.enable(1);
+  playerMesh.add(m);
+  for (const ws of [...spots].sort((p, q) => (q.front ? 1 : 0) - (p.front ? 1 : 0))) {
+    const w = new THREE.Mesh(wheelGeo, pmat);
+    w.position.set(ws.x, ws.y, ws.z);
+    w.rotation.order = "YXZ";
+    w.layers.enable(1);
+    playerMesh.add(w); wheels.push(w);
+  }
+}
+
+// Drive a different model: the Asoka livery, or a plain paint colour.
+function setPlayerCar(k, color, livery = false) {
+  const kit = kits[k];
+  carNow = { k, color, livery };
+  player.setSpec({ ...PLAYER_CAR, L: kit.spec.L, W: kit.spec.W, wr: kit.spec.wr });
+  pmat.uniforms.uUseLivery.value = livery ? 1 : 2;
+  if (!livery) pmat.uniforms.uPaint.value.set(...hex(color));
+  carBody(kit.body, kit.wheels, kit.wheelGeo);
+}
+
+const parkedKit = (p) => Math.floor(Math.abs(p.x * 7.13 + p.z * 3.71)) % parkedMeshes.length;
+
+// How far a point is from a car's footprint.
+function carGap(x, z, c, hl, hw) {
+  const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw), dx = x - c.x, dz = z - c.z;
+  return Math.hypot(Math.max(Math.abs(dx * fx + dz * fz) - hl, 0), Math.max(Math.abs(dx * fz - dz * fx) - hw, 0));
+}
+
+// The car you'd get into from here: your own first, then the nearest one in traffic or at the kerb.
+function carNear(x, z) {
+  if (carGap(x, z, player, player.hl, player.hw) < 2) return { kind: "own" };
+  if (!kits.length) return null;
+  let best = null, bd = 1.4;
+  for (const c of traffic.cars) {
+    if (c.burnt || Math.abs(c.x - x) > 8 || Math.abs(c.z - z) > 8) continue;
+    const d = carGap(x, z, c, c.hl, c.hw);
+    if (d < bd) { bd = d; best = { kind: c.mode === "parked" ? "left" : "traffic", c }; }
+  }
+  for (const v of city.views.values()) {
+    if (!v.street) continue;
+    const d0 = v.data;
+    if (x < d0.x0 - 8 || x > d0.x0 + CHUNK + 8 || z < d0.z0 - 8 || z > d0.z0 + CHUNK + 8) continue;
+    for (const p of d0.parked) {
+      if (Math.abs(p.x - x) > 8 || Math.abs(p.z - z) > 8) continue;
+      const k = parkedKit(p), sp = kits[k].spec;
+      const d = carGap(x, z, p, sp.L / 2, sp.W / 2);
+      if (d < bd) { bd = d; best = { kind: "parked", p, list: d0.parked, k }; }
+    }
+  }
+  return best;
+}
+
+const CAR_PROMPT = { own: "<kbd>F</kbd> Get in", left: "<kbd>F</kbd> Get in", traffic: "<kbd>F</kbd> Steal this car", parked: "<kbd>F</kbd> Break in" };
+
+// Take another car. The one you were driving stays at the kerb until something shunts it or you leave it behind.
+function takeCar(t) {
+  const old = { ...carNow, x: player.x, y: player.y, z: player.z, yaw: player.yaw };
+  let next;
+  if (t.kind === "parked") {
+    const p = t.p;
+    t.list.splice(t.list.indexOf(p), 1);
+    p.box.x1 = p.box.x0 - 1; p.box.y1 = -999;
+    next = { k: t.k, color: p.color, livery: false, x: p.x, z: p.z, yaw: p.yaw };
+    crowd.alarm(p.x, p.z, 12, p.x, p.z);
+    hud.toast("You force the door and hot-wire it.", 2.5);
+  } else {
+    const c = t.c;
+    traffic.cars.splice(traffic.cars.indexOf(c), 1);
+    next = { k: c.type, color: c.color, livery: !!c.livery, x: c.x, z: c.z, yaw: c.yaw };
+    if (t.kind === "traffic") {
+      crowd.alarm(c.x, c.z, 25, c.x, c.z);
+      hud.toast("You drag the driver out and take the car.", 2.5);
+      audio.bang(4, "knock");
+    }
+  }
+  const t0 = kits[old.k] && traffic.types.indexOf(kits[old.k].spec);
+  if (t0 >= 0) {
+    const sp = traffic.types[t0];
+    traffic.cars.push({ mode: "parked", type: t0, spec: sp, m: sp.mass, color: old.color ?? 0xfffdf9, livery: old.livery,
+      x: old.x, y: old.y, z: old.z, yaw: old.yaw, v: 0, vx: 0, vz: 0, r: 0, stuck: 0, ignore: 0, hl: sp.L / 2, hw: sp.W / 2, spin: 0, brake: false });
+  }
+  setPlayerCar(next.k, next.color, next.livery);
+  player.place(next.x, next.z, next.yaw);
+}
+
 function toggleFoot() {
   if (!me) { hud.toast("Your character is still loading.", 2); return; }
   if (mode === "drive") {
@@ -470,7 +553,9 @@ function toggleFoot() {
     me.holder.visible = true;
     camYaw = player.yaw; camPitch = -0.15;
   } else {
-    if (Math.hypot(walker.x - player.x, walker.z - player.z) > 4) { hud.toast("Walk up to your car to get in.", 2); return; }
+    const t = carNear(walker.x, walker.z);
+    if (!t) { hud.toast("Walk up to a car to get in.", 2); return; }
+    if (t.kind !== "own") takeCar(t);
     mode = "drive";
     me.holder.visible = false;
     releaseMouse();
@@ -793,7 +878,10 @@ function tick(dt) {
         const owned = save.homes.includes(v.id);
         prompt = v.kind === "home" ? (owned ? `<kbd>E</kbd> Go home · ${esc(v.name)}` : `<kbd>E</kbd> View ${esc(v.name)} · for sale ${fmtMoney(v.price)}`) : `<kbd>E</kbd> Enter ${esc(v.name)}`;
         if (input.hit("KeyE", 2)) enterVenue(v);
-      } else if (Math.hypot(walker.x - player.x, walker.z - player.z) < 4) prompt = "<kbd>F</kbd> Get in";
+      } else {
+        const t = carNear(walker.x, walker.z);
+        if (t) prompt = CAR_PROMPT[t.kind];
+      }
     }
   } else {
     arsenal.place(me, false);
@@ -1006,9 +1094,48 @@ function saleBoard(v) {
   return grp;
 }
 
+// After dark the nearest street lamps and headlights light the street, the people and the cars for real
+// (the glow sprites only paint the bulbs and pools). Lamps fade out toward the edge of the chosen set.
+const LAMP_COL = [1, 0.8, 0.52], HEAD_COL = [1, 0.93, 0.8];
+function pickLamps(night) {
+  const PL = U.uPL.value, PD = U.uPD.value, PC = U.uPC.value;
+  for (const v of PL) v.w = 0;
+  if (night < 0.05 || inside || !player) return;
+  let n = 0;
+  const put = (x, y, z, r, col, k, dir = null, cone = -2) => {
+    PL[n].set(x, y, z, r);
+    if (dir) PD[n].set(dir[0], dir[1], dir[2], cone); else PD[n].set(0, -1, 0, -2);
+    PC[n].set(col[0] * k, col[1] * k, col[2] * k);
+    n++;
+  };
+  const head = (c, r, k) => {
+    const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw), l = Math.hypot(fx, fz, 0.16);
+    put(c.x + fx * (c.hl + 0.2), c.y + 0.75, c.z + fz * (c.hl + 0.2), r, HEAD_COL, k * night, [fx / l, -0.16 / l, fz / l], 0.82);
+  };
+  head(player, 30, 3);
+  const f = mode === "foot" ? walker : player;
+  const near = traffic.cars.filter((c) => !c.burnt && Math.abs(c.x - f.x) < 45 && Math.abs(c.z - f.z) < 45)
+    .sort((a, b) => Math.hypot(a.x - f.x, a.z - f.z) - Math.hypot(b.x - f.x, b.z - f.z));
+  for (const c of near.slice(0, 2)) head(c, 22, 2);
+  const R = 80, cand = [];
+  for (const v of city.views.values()) {
+    const d = v.data;
+    if (f.x < d.x0 - R || f.x > d.x0 + CHUNK + R || f.z < d.z0 - R || f.z > d.z0 + CHUNK + R) continue;
+    const kn = city.knockedSet(v.cx, v.cz);
+    for (const o of d.glows) {
+      if (o.kind !== "lamp" || kn.has(o.id) || Math.abs(o.x - f.x) > R || Math.abs(o.z - f.z) > R) continue;
+      cand.push([Math.hypot(o.x - f.x, o.z - f.z), o]);
+    }
+  }
+  cand.sort((a, b) => a[0] - b[0]);
+  const room = PL.length - n, edge = cand.length > room ? cand[room][0] : R;
+  for (const [d, o] of cand.slice(0, room)) put(o.x, o.y, o.z, 17, LAMP_COL, 2.4 * night * clamp((edge - d) / (edge * 0.3), 0, 1));
+}
+
 function render(dt) {
   if (!world) return;
   exposure = applyTimeOfDay(U, hour);
+  pickLamps(U.uNight.value);
   if (inside) {
     // Indoor light for people and props: warm, from above, no sun shadows or haze.
     U.uLightDir.value.set(0.3, 1, 0.45).normalize();
@@ -1064,7 +1191,7 @@ function render(dt) {
       if (!v.street) continue;
       for (const p of v.data.parked) {
         if (Math.abs(p.x - cx) > R || Math.abs(p.z - cz) > R) continue;
-        const k = (Math.floor(Math.abs(p.x * 7.13 + p.z * 3.71)) % parkedMeshes.length);
+        const k = parkedKit(p);
         if (pc[k] >= 24) continue;
         const i = pc[k]++;
         e3.set(0, p.yaw, 0); q4.setFromEuler(e3); v3.set(p.x, p.y, p.z);
@@ -1084,16 +1211,17 @@ function render(dt) {
     if (!dead) for (const s of [-1, 1]) {
       const hx = x + fx * (hl + 0.1) + rx * s * (hw - 0.32), hz = z + fz * (hl + 0.1) + rz * s * (hw - 0.32);
       const tx = x - fx * (hl + 0.1) + rx * s * (hw - 0.3), tz = z - fz * (hl + 0.1) + rz * s * (hw - 0.3);
-      setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.95, 0.82], 0.008, 0.9, 0, -1, 3, y);
+      setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.95, 0.82], 0.008, 0.55, 0, -1, 2.4, y);
       setGlow(carGlow, n++, tx, y + 0.78, tz, [1, 0.1, 0.06], brake ? 0.3 : 0.015, brake ? 0.9 : 0.55, 0, -1, brake ? 4 : 2, y);
       if (night > 0.3) {
-        setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.92, 0.75], 0, 1.6, -1, -1, 1.2, y);
-        setGlow(carGlow, n++, tx, y + 0.78, tz, [1, 0.12, 0.06], 0, 1.4, -1, -1, brake ? 1.6 : 0.8, y);
+        setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.92, 0.75], 0, 0.6, -1, -1, 0.7, y);
+        setGlow(carGlow, n++, tx, y + 0.78, tz, [1, 0.12, 0.06], 0, 0.7, -1, -1, brake ? 1.2 : 0.6, y);
       }
     }
-    if (night > 0.2 && !dead) {
-      const d = isPlayer ? 11 : 8;
-      setGlow(carGlow, n++, x + fx * d, world.ground(x + fx * d, z + fz * d, y + 1) + 0.15, z + fz * d, [1, 0.92, 0.75], 0, isPlayer ? 6 : 4, 1 + 2 * Math.PI + Math.atan2(-fx, fz), -1, isPlayer ? 1.2 : 0.7, y);
+    // The player's headlights are a real light (pickLamps); traffic further off gets a painted pool.
+    if (night > 0.2 && !dead && !isPlayer) {
+      const d = 8;
+      setGlow(carGlow, n++, x + fx * d, world.ground(x + fx * d, z + fz * d, y + 1) + 0.15, z + fz * d, [1, 0.92, 0.75], 0, 4, 1 + 2 * Math.PI + Math.atan2(-fx, fz), -1, 0.45, y);
     }
     const sm = new THREE.Matrix4().compose(new THREE.Vector3(x, y + 0.06, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)), new THREE.Vector3(hw * 2.6, 1, hl * 2.3));
     if (sh < 80) shadows.setMatrixAt(sh++, sm);

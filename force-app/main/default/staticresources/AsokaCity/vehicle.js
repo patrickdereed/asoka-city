@@ -2,7 +2,7 @@
 // following with jumps, and collision against buildings, props, bridge walls and other cars.
 // Yaw is a rotation about +y; forward is (-sin yaw, -cos yaw) in (x, z), left is -right.
 import { clamp, lerp } from "./util.js";
-import { HALF, CHUNK, NCH } from "./map.js";
+import { HALF, CHUNK, NCH, ROAD_LIFT } from "./map.js";
 
 export const DT = 1 / 120;
 const G = 9.81;
@@ -37,13 +37,7 @@ export function corners(o) {
 export class Vehicle {
   constructor(world, spec, opts = {}) {
     this.w = world;
-    this.spec = spec;
-    this.m = spec.mass;
-    this.hl = spec.L / 2;
-    this.hw = spec.W / 2;
-    this.a = spec.L * 0.28;
-    this.b = spec.L * 0.31;
-    this.I = this.m * (spec.L * spec.L + spec.W * spec.W) / 11;
+    this.setSpec(spec);
     this.power = opts.power || 210000;
     this.mu = opts.mu || 1.05;
     this.C = this.m * 52;
@@ -56,10 +50,21 @@ export class Vehicle {
     this.knocked = opts.knocked || (() => {});
   }
 
+  // A different body: size, mass and the axles' spacing.
+  setSpec(spec) {
+    this.spec = spec;
+    this.m = spec.mass;
+    this.hl = spec.L / 2;
+    this.hw = spec.W / 2;
+    this.a = spec.L * 0.28;
+    this.b = spec.L * 0.31;
+    this.I = this.m * (spec.L * spec.L + spec.W * spec.W) / 11;
+  }
+
   place(x, z, yaw) {
     this.x = x; this.z = z; this.yaw = yaw;
     this.y = this.w.ground(x, z, 999);
-    if (this.w.onDeck === false && this.y < 0) this.y = 0;
+    if (this.w.onDeck === false) this.y = Math.max(this.y, 0) + ROAD_LIFT;
     this.vx = this.vz = this.vy = this.r = 0;
     this.steer = 0; this.airborne = false; this.inWater = 0;
     this.pitch = this.roll = 0;
@@ -147,7 +152,8 @@ export class Vehicle {
     const g = this.w.ground(this.x, this.z, this.y + 0.9);
     const onDeck = this.w.onDeck;
     const water = !onDeck && g < 0;
-    const floor = water ? Math.max(g, -1.4) : g;
+    // Off the bridges, tyres ride on the road surface, which is drawn a little above the terrain.
+    const floor = water ? Math.max(g, -1.4) : onDeck ? g : g + ROAD_LIFT;
     if (this.airborne) {
       this.vy -= G * dt;
       this.y += this.vy * dt;

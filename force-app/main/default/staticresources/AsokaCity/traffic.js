@@ -2,7 +2,7 @@
 // take random turns at junctions on a cubic curve, keep their distance from whatever is in
 // front, and become free-sliding wrecks when the player hits them.
 import { clamp, lerp, rng } from "./util.js";
-import { HALF, CHUNK, NCH } from "./map.js";
+import { HALF, CHUNK, NCH, ROAD_LIFT } from "./map.js";
 import { CAR_TYPES, TRAFFIC_COLORS } from "./cars.js";
 import { sat } from "./vehicle.js";
 
@@ -88,11 +88,14 @@ export class Traffic {
     this.cars = this.cars.filter((c) => Math.hypot(c.x - px, c.z - pz) < far + 80);
 
     for (const c of this.cars) {
+      // A car the player left at the kerb waits there until something hits it.
+      if (c.mode === "parked") continue;
       if (c.mode === "wreck") {
         const k = Math.max(0, 1 - 4.5 * dt / Math.max(Math.hypot(c.vx, c.vz), 0.5));
         c.vx *= k; c.vz *= k; c.r *= 1 - 3 * dt;
         c.x += c.vx * dt; c.z += c.vz * dt; c.yaw += c.r * dt;
         c.y = this.w.ground(c.x, c.z, c.y + 1);
+        if (!this.w.onDeck) c.y += ROAD_LIFT;
         if (c.y < -0.5) c.y = -0.5;
         c.brake = true;
         continue;
