@@ -49,7 +49,7 @@ All of them are on the map (M) and the minimap. Walk up to a door and press E. I
 The arsenal (`weapons.js`) runs from a bat to a rotary minigun: pistols, SMGs, shotguns, rifles, scoped
 rifles, a light machine gun, grenade and rocket launchers, and grenades. Hold a mouse button to look around
 (on foot or in the car); let go and the camera swings back behind you. The right button aims over the
-shoulder and the left fires only while aiming, Q or the wheel changes weapon, R reloads. People
+shoulder and the left fires only while aiming, Q or the wheel changes weapon, R reloads. Each model is built from a few hundred to two thousand parts in `weapons.js`: slide serrations, sights, ejection ports, toothed rails, slotted handguards, curved magazines, red-dot and holographic sights with glowing reticles, scopes with turrets and lenses, muzzle brakes, checkered wood grips, a fluted revolver cylinder with its chambers, shells in a side saddle, an LMG belt feeding from its box, a six-chamber launcher cylinder and a minigun's clamps and feed chute. Metal parts are glossier than polymer and wood, and the muzzle flash comes from the end of each barrel as built. People
 hit hard enough are knocked down (no blood); everyone nearby runs. Cars can be disabled and set alight.
 
 ## The city

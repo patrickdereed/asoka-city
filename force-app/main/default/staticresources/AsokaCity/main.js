@@ -1200,7 +1200,7 @@ function collectCash(at, r) {
   hud.pickups = world.pickups.filter((p) => !save.found.includes(p.id) && Math.abs(p.x - at.x) < 80 && Math.abs(p.z - at.z) < 80);
 }
 
-let camHold = null;   // test hook: { pos: [x, y, z], look: [x, y, z] }
+let camHold = null;   // test hook: { pos: [x, y, z], look: [x, y, z], fov? }
 // Landmarks: one in every district, each with cash at its highest point.
 function discover(at) {
   for (const l of world.landmarks) {
@@ -1218,7 +1218,7 @@ function updateCamera(dt) {
   camera.near = state === "creator" ? 0.05 : 0.8;
   if (camHold) {
     camera.position.set(...camHold.pos); camera.lookAt(...camHold.look);
-    camera.fov = 50; camera.updateProjectionMatrix();
+    camera.fov = camHold.fov || 50; camera.updateProjectionMatrix();
     return;
   }
   if (state === "creator") {
