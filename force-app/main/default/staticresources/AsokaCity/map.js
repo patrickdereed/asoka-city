@@ -11,6 +11,7 @@ export const SIZE = 8192, HALF = 4096, CHUNK = 256, NCH = 32, GRID = 128, NG = 6
 export const HRES = 8, HN = SIZE / HRES + 1;
 export const DECK = 4.5;           // bridge and causeway deck height above the sea
 export const ROAD_LIFT = 0.08;     // road surfaces sit this far above the terrain
+export const PAVE_LIFT = 0.15;     // pavements and plazas are kerb-high above it
 const RAMP = 0.06;                 // bridge approach grade
 const AVE_HW = 9, ST_HW = 6, HILL_HW = 5.5;
 
@@ -217,6 +218,19 @@ export class World {
       }
     }
     return g;
+  }
+
+  // How far the paving at (x, z) stands above the terrain: pavements and plazas are kerb-high,
+  // anything else (roads, grass) is zero. Pavements are drawn out to the road edge.
+  paveLift(x, z) {
+    const cx = Math.floor((x + HALF) / CHUNK), cz = Math.floor((z + HALF) / CHUNK);
+    if (cx < 0 || cz < 0 || cx >= NCH || cz >= NCH) return 0;
+    for (const s of this.chunk(cx, cz).slabs) {
+      if (s.pat !== 1 && s.pat !== 5) continue;
+      const m = s.pat === 1 ? 0.3 : 0;
+      if (x > s.x0 - m && x < s.x1 + m && z > s.z0 - m && z < s.z1 + m) return PAVE_LIFT;
+    }
+    return 0;
   }
 
   // Bridge side walls near a point, for collision.

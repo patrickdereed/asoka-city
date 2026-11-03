@@ -43,6 +43,8 @@ function bake(id, gltf) {
   const rl = (gltf.scene.userData && gltf.scene.userData.rl) || {};
   const g = new Geo({ cdata: 2, luv: 2 });
   const cache = new Map();
+  // Lamp vertices by kind and side, for the light glows: [x, y, z, n] sums and the extreme z.
+  const lamp = { 1: [null, null], 2: [null, null] };
   gltf.scene.updateMatrixWorld(true);
   const nm = new THREE.Matrix3();
   gltf.scene.traverse((o) => {
@@ -82,6 +84,12 @@ function bake(id, gltf) {
           g.e.luv = paint && UV1 ? [UV1.getX(i), UV1.getY(i)] : [0, 0];
           // Model space has x = left and z = forward; the game's cars face -z with +x to the right.
           g.vert([-v.x, v.y, -v.z], [-n.x, n.y, -n.z], col);
+          if (emi) {
+            const side = -v.x < 0 ? 0 : 1, L = lamp[emi];
+            if (!L[side]) L[side] = { x: 0, y: 0, z: 0, n: 0, zMin: Infinity, zMax: -Infinity };
+            const q = L[side]; q.x += -v.x; q.y += v.y; q.z += -v.z; q.n++;
+            q.zMin = Math.min(q.zMin, -v.z); q.zMax = Math.max(q.zMax, -v.z);
+          }
         }
       }
     }
@@ -110,8 +118,11 @@ function bake(id, gltf) {
   // Every car spins its own wheels: traffic and parked cars draw them as instances.
   const traffic = g.build();
   const L = (rl.nose || 2.2) - (rl.tail || -2.2), W = (rl.hw || 0.95) * 2;
+  // Where the glows go: the middle of each lamp, just proud of its outer face.
+  const spots = (k, front) => lamp[k].filter(Boolean).map((q) => [q.x / q.n, q.y / q.n, front ? q.zMin - 0.03 : q.zMax + 0.03]);
+  const lamps = { head: spots(1, true), tail: spots(2, false) };
   return {
-    id, body, wheelGeo: wheelOnly, traffic, wheels,
+    id, body, wheelGeo: wheelOnly, traffic, wheels, lamps,
     spec: { id, L, W, wr, belt: rl.belt || 0.9, roof: rl.roofY || 1.4, mass: 1150 + L * 60, wheelbase: (rl.zF || 1.3) - (rl.zR || -1.3) },
   };
 }

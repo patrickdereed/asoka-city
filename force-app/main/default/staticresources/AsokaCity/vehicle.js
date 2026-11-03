@@ -64,7 +64,7 @@ export class Vehicle {
   place(x, z, yaw) {
     this.x = x; this.z = z; this.yaw = yaw;
     this.y = this.w.ground(x, z, 999);
-    if (this.w.onDeck === false) this.y = Math.max(this.y, 0) + ROAD_LIFT;
+    if (this.w.onDeck === false) this.y = Math.max(this.y, 0) + Math.max(ROAD_LIFT, this.w.paveLift(x, z));
     this.vx = this.vz = this.vy = this.r = 0;
     this.steer = 0; this.airborne = false; this.inWater = 0;
     this.pitch = this.roll = 0;
@@ -166,8 +166,8 @@ export class Vehicle {
     const g = this.w.ground(this.x, this.z, this.y + 0.9);
     const onDeck = this.w.onDeck;
     const water = !onDeck && g < 0;
-    // Off the bridges, tyres ride on the road surface, which is drawn a little above the terrain.
-    const floor = water ? Math.max(g, -1.4) : onDeck ? g : g + ROAD_LIFT;
+    // Off the bridges, tyres ride on the road surface or the kerb-high pavement, both drawn above the terrain.
+    const floor = water ? Math.max(g, -1.4) : onDeck ? g : g + Math.max(ROAD_LIFT, this.w.paveLift(this.x, this.z));
     if (this.airborne) {
       this.vy -= G * dt;
       this.y += this.vy * dt;

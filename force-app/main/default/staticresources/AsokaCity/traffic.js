@@ -95,7 +95,7 @@ export class Traffic {
         c.vx *= k; c.vz *= k; c.r *= 1 - 3 * dt;
         c.x += c.vx * dt; c.z += c.vz * dt; c.yaw += c.r * dt;
         c.y = this.w.ground(c.x, c.z, c.y + 1);
-        if (!this.w.onDeck) c.y += ROAD_LIFT;
+        if (!this.w.onDeck) c.y += Math.max(ROAD_LIFT, this.w.paveLift(c.x, c.z));
         if (c.y < -0.5) c.y = -0.5;
         c.brake = true;
         continue;

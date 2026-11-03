@@ -146,6 +146,12 @@ async function boot() {
   }
   crowd = new Crowd(world, scene, U, districtAt);
   crowd.max = QUALITY[prefs.quality].crowd;
+  // Running someone over: a thump, a jolt, and it counts as putting them down.
+  crowd.onHit = (p, v, down) => {
+    audio.bang(Math.min(10, v * 0.5));
+    shake = Math.max(shake, Math.min(0.6, v * 0.03));
+    if (down && combat && combat.onCrime) combat.onCrime("down", p);
+  };
   walker = new Walker(world);
   combat = new Combat({ scene, world, U, mats, audio });
   combat.crowd = crowd; combat.traffic = traffic; combat.playerCar = player;
@@ -1498,16 +1504,24 @@ function render(dt) {
 
   // Car lights and blob shadows.
   let n = 0, sh = 0;
-  const lights = (x, y, z, yaw, hl, hw, brake, isPlayer, dead) => {
+  const lights = (x, y, z, yaw, hl, hw, brake, isPlayer, dead, kit) => {
     const fx = -Math.sin(yaw), fz = -Math.cos(yaw), rx = Math.cos(yaw), rz = -Math.sin(yaw);
-    if (!dead) for (const s of [-1, 1]) {
-      const hx = x + fx * (hl + 0.1) + rx * s * (hw - 0.32), hz = z + fz * (hl + 0.1) + rz * s * (hw - 0.32);
-      const tx = x - fx * (hl + 0.1) + rx * s * (hw - 0.3), tz = z - fz * (hl + 0.1) + rz * s * (hw - 0.3);
-      setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.95, 0.82], 0.008, 0.55, 0, -1, 2.4, y);
-      setGlow(carGlow, n++, tx, y + 0.78, tz, [1, 0.1, 0.06], brake ? 0.3 : 0.015, brake ? 0.9 : 0.55, 0, -1, brake ? 4 : 2, y);
-      if (night > 0.3) {
-        setGlow(carGlow, n++, hx, y + 0.68, hz, [1, 0.92, 0.75], 0, 0.6, -1, -1, 0.7, y);
-        setGlow(carGlow, n++, tx, y + 0.78, tz, [1, 0.12, 0.06], 0, 0.7, -1, -1, brake ? 1.2 : 0.6, y);
+    // The glows sit on the model's own lamps (measured when the kit was baked); the generic
+    // corners are only for bodies without marked lamps.
+    const L = kit && kit.lamps;
+    const head = L && L.head.length ? L.head : [[-(hw - 0.32), 0.68, -(hl + 0.1)], [hw - 0.32, 0.68, -(hl + 0.1)]];
+    const tail = L && L.tail.length ? L.tail : [[-(hw - 0.3), 0.78, hl + 0.1], [hw - 0.3, 0.78, hl + 0.1]];
+    const at = (p) => [x + rx * p[0] - fx * p[2], y + p[1], z + rz * p[0] - fz * p[2]];
+    if (!dead) {
+      for (const p of head) {
+        const [hx, hy, hz] = at(p);
+        setGlow(carGlow, n++, hx, hy, hz, [1, 0.95, 0.82], 0.008, 0.42, 0, -1, 2.4, y);
+        if (night > 0.3) setGlow(carGlow, n++, hx, hy, hz, [1, 0.92, 0.75], 0, 0.5, -1, -1, 0.7, y);
+      }
+      for (const p of tail) {
+        const [tx, ty, tz] = at(p);
+        setGlow(carGlow, n++, tx, ty, tz, [1, 0.1, 0.06], brake ? 0.3 : 0.015, brake ? 0.75 : 0.42, 0, -1, brake ? 4 : 2, y);
+        if (night > 0.3) setGlow(carGlow, n++, tx, ty, tz, [1, 0.12, 0.06], 0, 0.6, -1, -1, brake ? 1.2 : 0.6, y);
       }
     }
     // The player's headlights are a real light (pickLamps); traffic further off gets a painted pool.
@@ -1518,11 +1532,11 @@ function render(dt) {
     const sm = new THREE.Matrix4().compose(new THREE.Vector3(x, y + 0.06, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0)), new THREE.Vector3(hw * 2.6, 1, hl * 2.3));
     if (sh < 80) shadows.setMatrixAt(sh++, sm);
   };
-  lights(player.x, player.y, player.z, player.yaw, player.hl, player.hw, player.braking, true);
+  lights(player.x, player.y, player.z, player.yaw, player.hl, player.hw, player.braking, true, false, kits[carNow.k]);
   for (const c of traffic.cars) {
     if (n > 760) break;
     if (Math.hypot(c.x - camera.position.x, c.z - camera.position.z) > 420) continue;
-    lights(c.x, c.y, c.z, c.yaw, c.hl, c.hw, c.brake, false, c.burnt);
+    lights(c.x, c.y, c.z, c.yaw, c.hl, c.hw, c.brake, false, c.burnt, kits[c.type]);
   }
   // Door markers for the shops and homes close by, and the cash envelopes.
   const fp = mode === "foot" ? walker : player;

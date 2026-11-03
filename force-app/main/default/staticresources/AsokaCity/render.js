@@ -3,7 +3,7 @@
 import * as THREE from "./three.module.min.js";
 import * as S from "./shaders.js";
 import { Geo, propLamp, propPalm, propTree, propHut, propUmbrella, propCrane } from "./geo.js";
-import { HALF, CHUNK, NCH, HN, HRES, DECK, ST, PAL, NEON, SIGNS, TOWER, shoreDist, districtAt } from "./map.js";
+import { HALF, CHUNK, NCH, HN, HRES, DECK, ST, PAL, NEON, SIGNS, TOWER, PAVE_LIFT, shoreDist, districtAt } from "./map.js";
 import { hex, clamp, lerp, hash2 } from "./util.js";
 import { CAR_TYPES, trafficGeometry } from "./cars.js";
 
@@ -180,7 +180,7 @@ export function setGlow(g, i, x, y, z, col, day, size, mode, blink, inten, groun
 
 // ---------------------------------------------------------------------- chunk builders
 
-const SLAB_Y = 0.15;
+const SLAB_Y = PAVE_LIFT;
 
 function groundColor(world, x, z, h, ny) {
   if (h < -0.2) {
@@ -244,7 +244,7 @@ function buildSlabs(world, data) {
   const g = new Geo({ pat: 1 });
   for (let s of data.slabs) {
     // Pavements reach the road edge: the generator leaves a 0.3 m gap that showed grass.
-    if (s.pat === 1) s = { ...s, x0: s.x0 - 0.3, z0: s.z0 - 0.3, x1: s.x1 + 0.3, z1: s.z1 + 0.3 };
+    if (s.pat === 1) s = { ...s, x0: s.x0 - 0.3, z0: s.z0 - 0.3, x1: s.x1 + 0.3, z1: s.z1 + 0.3 };   // as World.paveLift
     const col = hex(s.color);
     g.e.pat = [s.pat];
     const lift = SLAB_Y + (s.pat === 4 ? 0.05 : s.pat === 0 ? -0.02 : 0);

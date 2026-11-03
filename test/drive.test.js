@@ -53,7 +53,7 @@ ok(Math.abs(car.fwdSpeed) < 0.6, `parked car stays put (${car.fwdSpeed.toFixed(2
 
 // Keyboard steering on open, flat ground: no spin-outs, on or off the throttle (handbrake aside).
 {
-  const flat = { onDeck: false, ground: () => 0, normal: () => [0, 1, 0], deckWalls: () => [], chunk: (cx, cz) => ({ x0: -4096 + cx * 256, z0: -4096 + cz * 256, grid: Array.from({ length: 64 }, () => []) }) };
+  const flat = { onDeck: false, ground: () => 0, paveLift: () => 0, normal: () => [0, 1, 0], deckWalls: () => [], chunk: (cx, cz) => ({ x0: -4096 + cx * 256, z0: -4096 + cz * 256, grid: Array.from({ length: 64 }, () => []) }) };
   let worst = 0;
   for (const kmh of [30, 60, 100]) for (const thr of [0, 1]) for (const hold of [0.4, 1.5]) {
     const c = new Vehicle(flat, PLAYER_CAR); c.place(0, 0, Math.PI); c.vz = kmh / 3.6;

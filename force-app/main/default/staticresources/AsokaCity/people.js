@@ -314,6 +314,12 @@ export class Crowd {
     const e = opts[this.r.int(0, opts.length - 1)];
     const dir = e.a === node ? 1 : -1;
     ped.e = e; ped.dir = dir; ped.s = dir > 0 ? e.sA : e.sB;
+    // Carry on round the corner on the same pavement: of the new street's two pavements, take
+    // the one nearer where they are now (keeping the side by direction could mean the far one).
+    const off = e.hw + 2.4;
+    const a = this.w.edgePoint(e, ped.s, off, {}), b = this.w.edgePoint(e, ped.s, -off, {});
+    const side = Math.hypot(a.x - ped.x, a.z - ped.z) <= Math.hypot(b.x - ped.x, b.z - ped.z) ? 1 : -1;
+    ped.walkSide = side * dir;
   }
 
   // Shot, hit or caught in a blast: knocked down at zero health, otherwise running.
@@ -366,10 +372,12 @@ export class Crowd {
         p.person.holder.position.set(p.x, p.y + 0.12 * p.person.down, p.z);
         continue;
       }
-      // Cars coming at you: get out of the way.
+      // Cars coming at you: get out of the way, if you've seen it coming (it's somewhere ahead of
+      // you, not behind). Anyone looking the other way gets hit.
       if (car && carSpeed > 3 && !p.flee) {
         const dx = p.x - car.x, dz = p.z - car.z, d = Math.hypot(dx, dz);
-        if (d < 4 + carSpeed * 0.5) {
+        const sees = (-Math.sin(p.yaw) * -dx + -Math.cos(p.yaw) * -dz) / Math.max(d, 0.01) > -0.25;
+        if (sees && d < 4 + carSpeed * 0.5) {
           const vx = car.vx / carSpeed, vz = car.vz / carSpeed;
           const ahead = dx * vx + dz * vz, lat = dx * vz - dz * vx;
           if (ahead > -1 && Math.abs(lat) < 3.2) {
@@ -394,9 +402,13 @@ export class Crowd {
         const end = p.dir > 0 ? p.e.sB : p.e.sA;
         if ((p.dir > 0 && p.s >= end) || (p.dir < 0 && p.s <= end)) this.nextEdge(p);
         this.w.edgePoint(p.e, p.s, (p.e.hw + 2.4) * p.walkSide * p.dir, tmp);
-        const ty = Math.atan2(-tmp.tx * p.dir, -tmp.tz * p.dir);
+        // Walk to the point on the path at walking pace (never glide or jump), and let the path
+        // wait for anyone who has fallen behind it, round a corner or after a shove.
+        const mx = tmp.x - p.x, mz = tmp.z - p.z, md = Math.hypot(mx, mz), step = (speed * 1.2 + 0.2) * dt;
+        if (md > 1.5) p.s -= speed * dt * p.dir;
+        if (md > step) { p.x += (mx / md) * step; p.z += (mz / md) * step; } else { p.x = tmp.x; p.z = tmp.z; }
+        const ty = md > 0.3 ? Math.atan2(-mx, -mz) : Math.atan2(-tmp.tx * p.dir, -tmp.tz * p.dir);
         p.yaw += angleWrap(ty - p.yaw) * Math.min(1, dt * 5);
-        p.x = lerp(p.x, tmp.x, Math.min(1, dt * 4)); p.z = lerp(p.z, tmp.z, Math.min(1, dt * 4));
       }
       // Bumped by the player on foot.
       if (walker) {
@@ -404,6 +416,20 @@ export class Crowd {
         if (d < 0.7 && d > 1e-3) { p.x += (dx / d) * (0.7 - d); p.z += (dz / d) * (0.7 - d); }
       }
       this.solid(p);
+      // Hit by the car: thrown down if it's going fast, otherwise shoved aside and off running.
+      if (p.hitT > 0) p.hitT -= dt;
+      if (car && carSpeed > 2 && !p.downT && !(p.hitT > 0)) {
+        const fx = -Math.sin(car.yaw), fz = -Math.cos(car.yaw), dx = p.x - car.x, dz = p.z - car.z;
+        const lz = dx * fx + dz * fz, lx = dx * fz - dz * fx;
+        if (Math.abs(lz) < car.hl + 0.25 && Math.abs(lx) < car.hw + 0.25) {
+          const push = Math.sign(lx || 1) * (car.hw + 0.3 - Math.abs(lx));
+          p.x += fz * push; p.z += -fx * push;
+          p.hitT = 0.6;
+          const down = this.hurt(p, carSpeed * 9, car.x - car.vx, car.z - car.vz);
+          if (this.onHit) this.onHit(p, carSpeed, down);
+          if (p.downT) continue;
+        }
+      }
       p.y = lerp(p.y, this.w.height(p.x, p.z) + 0.15, Math.min(1, dt * 8));
       p.person.holder.position.set(p.x, p.y, p.z);
       p.person.holder.rotation.y = p.yaw;
