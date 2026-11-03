@@ -98,6 +98,8 @@ function reach(upper, fore, hand, target, pole) {
   aimBone(fore, _v1.subVectors(_H, _E), _v2.subVectors(_t, _E));
 }
 
+const LEGS = ["Bip01_L_Thigh", "Bip01_R_Thigh", "Bip01_L_Calf", "Bip01_R_Calf", "Bip01_L_Foot", "Bip01_R_Foot", "Bip01_L_Toe0", "Bip01_R_Toe0"];
+
 // Rotate a bone about an axis given in the person's own frame (the holder's local space).
 function turn(bone, axisLocal, angle, holderQ) {
   if (!angle) return;
@@ -161,6 +163,8 @@ export class Person {
   async init() {
     const g = this.info.g;
     const idle = await loadClip(`${g}_idle_neutral`) || await loadClip("m_idle_neutral");
+    // The legs' neutral pose (straight, feet forward), before the idle clip spreads them.
+    this.legRest = LEGS.map((n) => this.bones[n]).filter(Boolean).map((b) => [b, b.quaternion.clone()]);
     if (idle) { this.idle = this.mixer.clipAction(idle); this.idle.play(); this.idle.time = Math.random() * idle.duration; }
     this.mixer.update(0);
     this.inner.updateMatrixWorld(true);
@@ -227,6 +231,9 @@ export class Person {
     const thighA = lerp(0.4, 0.78, r) * w, calfA = lerp(0.95, 1.45, r) * w;
     const armA = lerp(0.32, 0.62, r) * w, foreA = lerp(0.22, 1.35, r) * w;
     const s = Math.sin(ph), c = Math.cos(ph);
+    // The idle clip stands with the feet apart and turned out; walking from that leaves every leg
+    // canted. Ease the legs back to neutral as the walk comes in, then swing them.
+    for (const [b, q] of this.legRest || []) b.quaternion.slerp(q, Math.min(1, w));
     turn(B.Bip01_L_Thigh, L, this.sThigh * thighA * s, hq);
     turn(B.Bip01_R_Thigh, L, -this.sThigh * thighA * s, hq);
     turn(B.Bip01_L_Calf, L, this.sCalf * (calfA * Math.pow(Math.max(0, c), 1.4) + 0.06 * w), hq);
