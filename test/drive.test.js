@@ -51,6 +51,23 @@ car.place(-2.4, -60, Math.PI); car.hold = 0;
 run(5, { throttle: 0, brake: 1, steer: 0, handbrake: true });
 ok(Math.abs(car.fwdSpeed) < 0.6, `parked car stays put (${car.fwdSpeed.toFixed(2)} m/s)`);
 
+// Keyboard steering on open, flat ground: no spin-outs, on or off the throttle (handbrake aside).
+{
+  const flat = { onDeck: false, ground: () => 0, normal: () => [0, 1, 0], deckWalls: () => [], chunk: (cx, cz) => ({ x0: -4096 + cx * 256, z0: -4096 + cz * 256, grid: Array.from({ length: 64 }, () => []) }) };
+  let worst = 0;
+  for (const kmh of [30, 60, 100]) for (const thr of [0, 1]) for (const hold of [0.4, 1.5]) {
+    const c = new Vehicle(flat, PLAYER_CAR); c.place(0, 0, Math.PI); c.vz = kmh / 3.6;
+    let k = 0;
+    for (let t = 0; t < 3; t += DT) {
+      k = t < hold ? Math.min(1, k + 4 * DT) : Math.max(0, k - 5 * DT);
+      c.step(DT, { throttle: thr, brake: 0, steer: k, handbrake: false });
+      const u = c.fwdSpeed, vl = c.vx * -Math.cos(c.yaw) + c.vz * Math.sin(c.yaw);
+      if (c.speed > 2) worst = Math.max(worst, Math.abs(Math.atan2(vl, Math.abs(u))) * 57.3);
+    }
+  }
+  ok(worst < 20, `no spin-outs when steering (worst slide ${worst.toFixed(0)} deg)`);
+}
+
 // Steady cornering: full lock at 60 km/h should turn, not spin out or explode.
 car.place(-2.4, -60, Math.PI);
 car.vz = 16.7;

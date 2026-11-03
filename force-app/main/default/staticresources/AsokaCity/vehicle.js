@@ -40,7 +40,6 @@ export class Vehicle {
     this.setSpec(spec);
     this.power = opts.power || 210000;
     this.mu = opts.mu || 1.05;
-    this.C = this.m * 52;
     this.x = 0; this.y = 0; this.z = 0; this.yaw = 0;
     this.vx = 0; this.vz = 0; this.vy = 0; this.r = 0;
     this.steer = 0; this.airborne = false; this.air = 0;
@@ -59,6 +58,7 @@ export class Vehicle {
     this.a = spec.L * 0.28;
     this.b = spec.L * 0.31;
     this.I = this.m * (spec.L * spec.L + spec.W * spec.W) / 11;
+    this.C = this.m * 52;   // tyre cornering stiffness follows the car's weight
   }
 
   place(x, z, yaw) {
@@ -96,6 +96,8 @@ export class Vehicle {
       let Fx = 0;
       if (inp.throttle > 0) {
         Fx = Math.min((this.power * inp.throttle) / Math.max(Math.abs(u), 2.5), muR * Fzr * 1.05);
+        // Traction control: while steering hard, keep some rear grip free for cornering.
+        if (!inp.handbrake) Fx = Math.min(Fx, muR * Fzr * (1.05 - 0.6 * Math.min(1, Math.abs(d) / 0.25)));
       }
       if (inp.brake > 0) {
         if (u > 0.6) Fx -= inp.brake * 12500;
@@ -119,6 +121,15 @@ export class Vehicle {
       const dvl = (Fyf * Math.cos(d) + Fyr) / this.m - u * this.r;
       const dr = (this.a * Fyf * Math.cos(d) - this.b * Fyr) / this.I;
       u += du * dt; vl += dvl * dt; this.r += dr * dt;
+
+      // Stability control: unless the handbrake is on, hold the yaw rate near what the steering asks
+      // for and the tyres can give, and let the sideways slide die away. The handbrake still drifts.
+      if (!inp.handbrake && Math.abs(u) > 3) {
+        const rMax = (this.mu * wet * G * 1.25) / Math.abs(u);   // a little more than true grip: arcade cornering
+        const rWant = clamp((u * Math.tan(d)) / L, -rMax, rMax);
+        this.r += (rWant - this.r) * Math.min(1, dt * 5);
+        vl *= 1 - Math.min(1, dt * 3);
+      }
 
       // At walking pace the tyres just follow the steering.
       if (Math.abs(u) < 2.5) {
