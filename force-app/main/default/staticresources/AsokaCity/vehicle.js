@@ -46,6 +46,7 @@ export class Vehicle {
     this.pitch = 0; this.roll = 0; this.spin = 0;
     this.inWater = 0; this.events = [];
     this.slip = 0; this.rpm = 900; this.gear = 1; this.throttle = 0; this.braking = false; this.hold = 0;
+    this.sus = 0; this.susV = 0; this.floorPrev = null; this.floorRate = 0;
     this.knocked = opts.knocked || (() => {});
   }
 
@@ -59,6 +60,10 @@ export class Vehicle {
     this.b = spec.L * 0.31;
     this.I = this.m * (spec.L * spec.L + spec.W * spec.W) / 11;
     this.C = this.m * 52;   // tyre cornering stiffness follows the car's weight
+    // Springs by weight: light sports cars sit stiff and low on short travel, vans and pickups
+    // ride soft with plenty of it (natural frequency 2.4 down to 1.2 Hz, damping ratio 0.55).
+    const soft = clamp((spec.mass - 1250) / 750, 0, 1), w = 2 * Math.PI * lerp(2.4, 1.2, soft);
+    this.susK = w * w; this.susC = 2 * 0.55 * w; this.susT = lerp(0.05, 0.16, soft);
   }
 
   place(x, z, yaw) {
@@ -68,6 +73,7 @@ export class Vehicle {
     this.vx = this.vz = this.vy = this.r = 0;
     this.steer = 0; this.airborne = false; this.inWater = 0;
     this.pitch = this.roll = 0;
+    this.sus = this.susV = 0; this.floorPrev = null; this.floorRate = 0;
   }
 
   get speed() { return Math.hypot(this.vx, this.vz); }
@@ -168,12 +174,21 @@ export class Vehicle {
     const water = !onDeck && g < 0;
     // Off the bridges, tyres ride on the road surface or the kerb-high pavement, both drawn above the terrain.
     const floor = water ? Math.max(g, -1.4) : onDeck ? g : g + Math.max(ROAD_LIFT, this.w.paveLift(this.x, this.z));
+    // Suspension: the tyres follow the floor, the body rides on springs above them. A kerb or a
+    // step is a jolt the springs soak up (the body dips, then settles); only a sustained rise,
+    // a ramp or a crest, carries into the car's vertical speed, so those still throw it.
+    const dFloor = this.floorPrev == null || this.airborne ? 0 : floor - this.floorPrev;
+    this.floorPrev = floor;
+    this.floorRate = lerp(this.floorRate, dFloor / dt, Math.min(1, dt * 8));
+    this.susV += (-this.susK * this.sus - this.susC * this.susV) * dt;
+    this.sus = clamp(this.sus + this.susV * dt - dFloor, -this.susT, this.susT);
     if (this.airborne) {
       this.vy -= G * dt;
       this.y += this.vy * dt;
       if (this.y <= floor) {
         if (this.vy < -5) this.events.push({ type: "land", mag: -this.vy });
-        this.y = floor; this.vy = 0; this.airborne = false;
+        this.susV += this.vy * 0.6;   // the landing loads the springs
+        this.y = floor; this.vy = 0; this.airborne = false; this.floorRate = 0;
       }
     } else {
       const vyN = this.vy - G * dt;
@@ -181,7 +196,7 @@ export class Vehicle {
       if (yN > floor + 0.04 && !water) {
         this.airborne = true; this.y = yN; this.vy = vyN;
       } else {
-        this.vy = clamp((floor - this.y) / dt, -12, 14);
+        this.vy = clamp(this.floorRate, -12, 14);
         this.y = floor;
       }
     }
@@ -196,10 +211,9 @@ export class Vehicle {
     // Body attitude from the four wheel heights plus weight transfer.
     const fx2 = -Math.sin(this.yaw), fz2 = -Math.cos(this.yaw), rx2 = Math.cos(this.yaw), rz2 = -Math.sin(this.yaw);
     if (!this.airborne) {
-      const hF = this.w.ground(this.x + fx2 * 1.3, this.z + fz2 * 1.3, this.y + 1);
-      const hB = this.w.ground(this.x - fx2 * 1.3, this.z - fz2 * 1.3, this.y + 1);
-      const hR = this.w.ground(this.x + rx2 * 0.8, this.z + rz2 * 0.8, this.y + 1);
-      const hL = this.w.ground(this.x - rx2 * 0.8, this.z - rz2 * 0.8, this.y + 1);
+      const at = (x, z) => { const h = this.w.ground(x, z, this.y + 1); return this.w.onDeck ? h : h + this.w.paveLift(x, z); };
+      const hF = at(this.x + fx2 * 1.3, this.z + fz2 * 1.3), hB = at(this.x - fx2 * 1.3, this.z - fz2 * 1.3);
+      const hR = at(this.x + rx2 * 0.8, this.z + rz2 * 0.8), hL = at(this.x - rx2 * 0.8, this.z - rz2 * 0.8);
       const tp = Math.atan2(hF - hB, 2.6), tr = Math.atan2(hL - hR, 1.6);
       this.pitch = lerp(this.pitch, clamp(tp, -0.6, 0.6), 0.25);
       this.roll = lerp(this.roll, clamp(tr, -0.5, 0.5), 0.25);

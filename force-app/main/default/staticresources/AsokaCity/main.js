@@ -2,7 +2,7 @@
 // on-foot game: money, weapons, the shops and homes you walk into, and the save.
 import * as THREE from "./three.module.min.js";
 import { World, SPAWN, HALF, CHUNK, NCH, TOWER, PLAZA, districtAt } from "./map.js";
-import { Crowd, Person, PEOPLE } from "./people.js";
+import { Crowd, Person, PEOPLE, pockets } from "./people.js";
 import { Walker } from "./walker.js";
 import { makeUniforms, makeMaterials, makeSky, makeSea, makeSignTexture, makeSignMaterial, buildTower, CityView, applyTimeOfDay, glowGeometry, setGlow, KIT_PARKED } from "./render.js";
 import { Vehicle, DT } from "./vehicle.js";
@@ -12,7 +12,8 @@ import { HUD, BigMap, drawMapImage } from "./hud.js";
 import { loadKits, asokaLivery, PLAYER_KIT } from "./carkits.js";
 import { Input } from "./input.js";
 import { Audio } from "./audio.js";
-import { clamp, lerp, angleWrap, hex } from "./util.js";
+import { clamp, lerp, angleWrap, hex, rng } from "./util.js";
+import { Geo } from "./geo.js";
 import { Post } from "./post.js";
 import { SunShadow } from "./shadow.js";
 import { Combat } from "./combat.js";
@@ -77,6 +78,7 @@ const CAM_PITCH = -0.12;
 let lookIdle = 0, carLook = { yaw: 0, pitch: 0, idle: 0 };   // mouse look on foot and from the car
 let state = "loading", acc = 0, last = performance.now(), mapOpen = false;
 let inside = null, shop = null, previewMesh = null, hitT = 0, aimPoint = new THREE.Vector3(), creatorSpin = 0, fade, saveT = 0;
+let drops = [], ammoGeo = null;   // what knocked-out people dropped: cash, guns, ammo boxes
 let cashMesh, boards = new Map(), deadT = 0, pmat, carNow = { k: -1, color: null, livery: true };
 let doorPivot = null, doorInfo = null, doorOpen = 0, jack = null, thrown = [], timeScale = 1;
 
@@ -147,6 +149,7 @@ async function boot() {
   crowd = new Crowd(world, scene, U, districtAt);
   crowd.max = QUALITY[prefs.quality].crowd;
   // Running someone over: a thump, a jolt, and it counts as putting them down.
+  crowd.onDrop = dropLoot;
   crowd.onHit = (p, v, down) => {
     audio.bang(Math.min(10, v * 0.5));
     shake = Math.max(shake, Math.min(0.6, v * 0.03));
@@ -227,9 +230,63 @@ function makeCash() {
   for (let i = 0; i < n; i++) { col.set([0.84, 0.63, 0.24], i * 3); cd.set([0, 4], i * 2); }
   geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
   geo.setAttribute("cdata", new THREE.BufferAttribute(cd, 2));
-  const m = new THREE.InstancedMesh(geo, mats.prop, 24);
+  const m = new THREE.InstancedMesh(geo, mats.prop, 48);
   m.count = 0; m.frustumCulled = false;
   return m;
+}
+
+// A box of ammunition: olive with a cream label band.
+function makeAmmoGeo() {
+  const g = new Geo({ cdata: 2 });
+  g.e.cdata = [0, 0];
+  g.box(0, 0.08, 0, 0.32, 0.16, 0.18, hex(0x5d6b4a));
+  g.box(0, 0.165, 0, 0.12, 0.02, 0.05, hex(0x3d4a4c));
+  g.box(0, 0.09, 0.091, 0.2, 0.05, 0.004, hex(0xefe3d2));
+  return g.build();
+}
+
+// Knocked-out people's belongings land round them.
+function dropLoot(p, items) {
+  items.forEach((it, i) => {
+    const a = i * 2.1 + Math.random() * 1.5, x = p.x + Math.cos(a) * 0.8, z = p.z + Math.sin(a) * 0.8;
+    const d = { ...it, x, z, y: world.ground(x, z, p.y + 1) + 0.15, t: 0, mesh: null };
+    if (it.kind === "gun") d.mesh = new THREE.Mesh(weaponGeometry(it.id), arsenal.mat);
+    else if (it.kind === "ammo") d.mesh = new THREE.Mesh(ammoGeo || (ammoGeo = makeAmmoGeo()), mats.prop);
+    if (d.mesh) { d.mesh.frustumCulled = false; scene.add(d.mesh); }
+    drops.push(d);
+  });
+  while (drops.length > 30) removeDrop(drops[0]);
+}
+function removeDrop(d) {
+  if (d.mesh) scene.remove(d.mesh);
+  drops = drops.filter((q) => q !== d);
+}
+
+// Walk (or drive) over a drop to take it.
+function collectDrops(at, r) {
+  for (const d of [...drops]) {
+    d.t += 1 / 60;
+    if (Math.hypot(d.x - at.x, d.z - at.z) > 320) { removeDrop(d); continue; }
+    if (Math.hypot(d.x - at.x, d.z - at.z) > r || Math.abs(d.y - at.y) > 2.5) continue;
+    if (d.kind === "cash") {
+      earn(d.value); hud.toast(`Picked up ${fmtMoney(d.value)}`, 2);
+    } else {
+      const w = WEAPON[d.id], st = save.weapons[d.id];
+      if (d.kind === "gun") {
+        arsenal.give(d.id);
+        hud.toast(st ? `${w.name}: +${w.ammoPack} rounds` : `Picked up a ${w.name} (${w.kind.toLowerCase()})`, 3);
+      } else if (st) {
+        st.ammo = Math.min(w.ammo, st.ammo + w.ammoPack);
+        hud.toast(`${w.name}: +${w.ammoPack} rounds`, 2);
+      } else {
+        if (!d.warned) hud.toast(`${w.name} ammo. No use without a ${w.kind.toLowerCase()}.`, 3);
+        d.warned = true;
+        continue;
+      }
+      audio.cash(true);
+    }
+    removeDrop(d);
+  }
 }
 
 // ------------------------------------------------------------------------------ screens
@@ -799,7 +856,7 @@ function updateThrown(dt) {
     }
     P.down = 0;
     P.holder.rotation.set(0, d.fallYaw + Math.PI, 0);
-    const ped = { person: P, e: null, s: 0, walkSide: 1, dir: 1, x: d.x, z: d.z, y: d.y, yaw: d.fallYaw + Math.PI, speed: 1.3, cruise: 1.3, standing: false, flee: 0, fleeX: 0, fleeZ: 0, hp: 100, panic: 12, downT: 0 };
+    const ped = { person: P, e: null, s: 0, walkSide: 1, dir: 1, x: d.x, z: d.z, y: d.y, yaw: d.fallYaw + Math.PI, speed: 1.3, cruise: 1.3, standing: false, flee: 0, fleeX: 0, fleeZ: 0, hp: 100, panic: 12, downT: 0, ...pockets(rng(Math.random() * 1e9), 1.6) };
     crowd.rejoin(ped);
     if (ped.e) crowd.people.push(ped); else scene.remove(P.holder);
     return false;
@@ -1170,6 +1227,7 @@ function tick(dt) {
     traffic.collidePlayer(player);
     crowd.update(dt, camera.position, mode === "drive" ? player : null, mode === "foot" ? walker : null);
     collectCash(mode === "drive" ? player : walker, mode === "drive" ? 2.6 : 1.3);
+    collectDrops(mode === "drive" ? player : walker, mode === "drive" ? 2.6 : 1.3);
     discover(mode === "drive" ? player : walker);
   }
   combat.update(dt, camera, renderer.getDrawingBufferSize(v3.set(0, 0, 0)).y);
@@ -1448,6 +1506,9 @@ function render(dt) {
 
   // Player car
   playerMesh.position.set(player.x, player.y, player.z);
+  // The body rides its springs; the wheels stay on the road.
+  playerMesh.children[0].position.y = player.sus;
+  if (doorPivot) doorPivot.position.y = doorInfo.pivot[1] + player.sus;
   playerMesh.rotation.set(player.pitch, player.yaw, player.roll);
   if (doorPivot) doorPivot.rotation.y = -DOOR_ANGLE * doorOpen;
   wheels.forEach((w, i) => {
@@ -1557,6 +1618,19 @@ function render(dt) {
     m4.compose(v3, q4, s3); cashMesh.setMatrixAt(cn++, m4);
     if (n < 896) setGlow(carGlow, n++, p.x, p.y + 0.55, p.z, [1, 0.8, 0.35], 1, 0.6, 0, -1, 1.4, p.y);
   }
+  for (const d of drops) {
+    const spin = time * 1.6 + d.x, bob = 0.35 + Math.sin(time * 3 + d.z) * 0.06;
+    if (d.kind === "cash") {
+      if (cn >= 48) continue;
+      e3.set(0, spin, 0); q4.setFromEuler(e3); v3.set(d.x, d.y + bob, d.z);
+      m4.compose(v3, q4, s3); cashMesh.setMatrixAt(cn++, m4);
+    } else if (d.mesh) {
+      d.mesh.position.set(d.x, d.y + bob, d.z);
+      d.mesh.rotation.set(0, spin, d.kind === "gun" ? 0 : 0);
+    }
+    const col = d.kind === "cash" ? [1, 0.8, 0.35] : d.kind === "gun" ? [0.6, 0.85, 1] : [1, 0.6, 0.25];
+    if (n < 896) setGlow(carGlow, n++, d.x, d.y + 0.02, d.z, col, 1, 0.9, 1, -1, 1.1, d.y);
+  }
   cashMesh.count = cn; cashMesh.instanceMatrix.needsUpdate = true;
   carGlow.instanceCount = n;
   for (const k of ["iPos", "iCol", "iP", "iG"]) carGlow.attributes[k].needsUpdate = true;
@@ -1579,6 +1653,7 @@ window.__ac = {
   scene, camera, get me() { return me; }, get walker() { return walker; }, get crowd() { return crowd; }, toggleFoot: () => toggleFoot(), get post() { return post; }, get U() { return U; },
   get world() { return world; }, get player() { return player; }, get traffic() { return traffic; }, get city() { return city; }, setHour: (h) => (hour = h), get renderer() { return renderer; },
   save, get arsenal() { return arsenal; }, get combat() { return combat; }, get inside() { return inside; }, enterVenue: (v) => enterVenue(v), leaveVenue: () => leaveVenue(), showShop: (k) => showShop(k), closeShop: () => closeShop(),
+  get drops() { return drops; },
   setCam: (yaw, pitch) => { camYaw = yaw; camPitch = pitch; }, get state() { return state; }, holdCam: (h) => { camHold = h; },
   showCreator: (p) => showCreator(p), set timeScale(k) { timeScale = k; }, get jack() { return jack; }, dress: (s) => dress(me, s), get prefs() { return prefs; },
 };

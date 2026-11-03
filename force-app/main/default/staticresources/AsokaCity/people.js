@@ -256,6 +256,11 @@ export class Person {
 const URBAN = new Set(["console", "uptown", "cadence", "sandbox", "scratch", "preview", "gardens", "meridian", "park", "docks"]);
 const tmp = {};
 const PED_R = 0.32;
+// What a few of the people on the street are carrying, concealed.
+export const STREET_GUNS = ["hotfix9", "hotfix9", "hotfix9", "rootcause", "burstmode", "batchjob", "quickfix"];
+export function pockets(r, rich = 1) {
+  return { cash: Math.round(r.range(4, 60) * (r() < 0.12 ? 6 : 1) * rich), gun: r() < 0.14 ? STREET_GUNS[r.int(0, STREET_GUNS.length - 1)] : null };
+}
 
 export class Crowd {
   constructor(world, scene, U, districtAt) {
@@ -295,6 +300,7 @@ export class Crowd {
         yaw: Math.atan2(-tmp.tx * dir, -tmp.tz * dir), speed: standing ? 0 : r.range(1.1, 1.55), cruise: 0, standing, flee: 0, fleeX: 0, fleeZ: 0 };
       ped.cruise = ped.speed;
       ped.hp = 100; ped.panic = 0; ped.downT = 0;
+      Object.assign(ped, pockets(r));
       if (!standing) { person.walkW = 1; person.runW = 0; }
       if (standing) {
         ped.yaw = Math.atan2(-tmp.tz * side, tmp.tx * side) + r.range(-0.5, 0.5);
@@ -326,14 +332,32 @@ export class Crowd {
   hurt(p, dmg, fx, fz) {
     if (p.downT) return false;
     p.hp -= dmg;
-    if (p.hp <= 0) {
-      p.downT = 0.001; p.fallYaw = Math.atan2(p.x - fx, p.z - fz);
-      if (this.onDown) this.onDown(p);
-      this.alarm(p.x, p.z, 30, fx, fz);
-      return true;
-    }
+    if (p.hp <= 0) { this.knock(p, fx, fz, true); return true; }
     this.alarm(p.x, p.z, 6, fx, fz);
     return false;
+  }
+
+  // Knocked off their feet: a minor knock and they lie a moment, get up and run; a bad one and they
+  // pass out where they fall and drop what they were carrying.
+  knock(p, fx, fz, out) {
+    p.downT = 0.001; p.fallYaw = Math.atan2(p.x - fx, p.z - fz); p.out = out; p.from = [fx, fz];
+    p.upAt = out ? Infinity : 1.5 + this.r() * 1.5;
+    p.flee = 0; p.person.dive = 0;
+    if (out) {
+      if (this.onDown) this.onDown(p);
+      this.drop(p);
+      this.alarm(p.x, p.z, 30, fx, fz);
+    } else this.alarm(p.x, p.z, 8, fx, fz);
+  }
+
+  // Their cash, and if they were carrying, the gun or a box of its ammo.
+  drop(p) {
+    if (!this.onDrop || p.dropped) return;
+    p.dropped = true;
+    const items = [];
+    if (p.cash > 0) items.push({ kind: "cash", value: p.cash });
+    if (p.gun) items.push({ kind: this.r() < 0.5 ? "gun" : "ammo", id: p.gun });
+    if (items.length) this.onDrop(p, items);
   }
 
   // Everyone near a threat runs away from it along their pavement.
@@ -363,10 +387,22 @@ export class Crowd {
     const carSpeed = car ? Math.hypot(car.vx, car.vz) : 0;
     for (const p of this.people) {
       if (p.downT) {
-        // Knocked down: topple over, then lie still.
+        // Knocked down: topple over and lie there; after a minor knock, get back up and run.
         p.downT += dt;
-        const k = Math.min(1, p.downT / 0.55);
-        p.person.down = Math.max(0.001, k * k);
+        let k = Math.min(1, p.downT / 0.55); k *= k;
+        if (p.downT > p.upAt) {
+          const u = Math.min(1, (p.downT - p.upAt) / 0.8);
+          k = 1 - u * u;
+          if (u >= 1) {
+            p.downT = 0; p.person.down = 0; p.yaw = p.fallYaw + Math.PI;
+            p.person.holder.rotation.set(0, p.yaw, 0);
+            p.standing = false;
+            this.rejoin(p);
+            this.alarm(p.x, p.z, 0.5, p.from[0], p.from[1]);
+            continue;
+          }
+        }
+        p.person.down = Math.max(0.001, k);
         p.person.holder.rotation.order = "YXZ";
         p.person.holder.rotation.set(-p.person.down * Math.PI / 2, p.fallYaw + Math.PI, 0);
         p.person.holder.position.set(p.x, p.y + 0.12 * p.person.down, p.z);
@@ -425,8 +461,11 @@ export class Crowd {
           const push = Math.sign(lx || 1) * (car.hw + 0.3 - Math.abs(lx));
           p.x += fz * push; p.z += -fx * push;
           p.hitT = 0.6;
-          const down = this.hurt(p, carSpeed * 9, car.x - car.vx, car.z - car.vz);
-          if (this.onHit) this.onHit(p, carSpeed, down);
+          const fx2 = car.x - car.vx, fz2 = car.z - car.vz;
+          p.hp -= carSpeed * 9;
+          const out = p.hp <= 0;
+          if (out || carSpeed > 2.5) this.knock(p, fx2, fz2, out); else this.alarm(p.x, p.z, 6, fx2, fz2);
+          if (this.onHit) this.onHit(p, carSpeed, out);
           if (p.downT) continue;
         }
       }

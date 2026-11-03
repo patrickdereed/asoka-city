@@ -68,6 +68,22 @@ ok(Math.abs(car.fwdSpeed) < 0.6, `parked car stays put (${car.fwdSpeed.toFixed(2
   ok(worst < 20, `no spin-outs when steering (worst slide ${worst.toFixed(0)} deg)`);
 }
 
+// Suspension: driving up a kerb soaks it up (no launch); a ramp's lip still throws the car.
+{
+  const grid = (cx, cz) => ({ x0: -4096 + cx * 256, z0: -4096 + cz * 256, grid: Array.from({ length: 64 }, () => []) });
+  const kerb = { onDeck: false, ground: () => 0, paveLift: (x, z) => (z < -10 ? 0.15 : 0), normal: () => [0, 1, 0], deckWalls: () => [], chunk: grid };
+  const c = new Vehicle(kerb, PLAYER_CAR); c.place(0, 0, 0); c.vz = -15;
+  let lift = 0, air = false;
+  for (let t = 0; t < 2; t += DT) { c.step(DT, { throttle: 0.3, brake: 0, steer: 0, handbrake: false }); lift = Math.max(lift, c.y - 0.15 * (c.z < -10) - 0.08 * (c.z >= -10)); air = air || c.airborne; }
+  ok(!air && lift < 0.06, `kerb at 54 km/h: no launch (rose ${lift.toFixed(2)} m above the floor)`);
+  const rampH = (z) => (z < -5 && z > -25 ? (-5 - z) * 0.25 : 0);
+  const ramp = { onDeck: false, ground: (x, z) => rampH(z), paveLift: () => 0, normal: () => [0, 1, 0], deckWalls: () => [], chunk: grid };
+  const r2 = new Vehicle(ramp, PLAYER_CAR); r2.place(0, 0, 0); r2.vz = -25;
+  let flew = false;
+  for (let t = 0; t < 2; t += DT) { r2.step(DT, { throttle: 1, brake: 0, steer: 0, handbrake: false }); flew = flew || (r2.airborne && r2.y > 1); }
+  ok(flew, "a ramp still launches the car");
+}
+
 // Steady cornering: full lock at 60 km/h should turn, not spin out or explode.
 car.place(-2.4, -60, Math.PI);
 car.vz = 16.7;

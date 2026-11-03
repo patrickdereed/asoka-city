@@ -80,13 +80,13 @@ mullions. Homes have curtains and the odd window air-con unit, pitched roofs hav
 roofs membrane strips. Windows that would be cut by a roofline or parapet are left out. `detailBuilding` in `render.js` adds corner piers and pilasters, art deco
 crowns, steel fins and a lit crown line on the glass towers, balconies and cornices on houses, chimneys
 on pitched roofs, and air-con units, vents, stair housings and masts on flat roofs. Pedestrians collide
-with the same building, lamp and tree colliders as the player, walk round corners on the pavement they are on, and never move faster than they walk. They only dive out of the way of a car they can see coming; anyone looking the other way gets hit (knocked down at speed, shoved and sent running when slow).
+with the same building, lamp and tree colliders as the player, walk round corners on the pavement they are on, and never move faster than they walk. They only dive out of the way of a car they can see coming; anyone looking the other way gets hit. A minor knock puts them down for a couple of seconds before they get up and run; a bad one (or being shot or blown down) knocks them out, and they drop their cash and, if they were carrying, their gun or a box of its ammo. Walk or drive over the drops to take them.
 
 Streets: the road shader adds aggregate, cracks, patched trenches, an oil strip down each lane, a
 concrete gutter with storm drains, manhole covers and turn arrows before the stop lines. Pavements are
 concrete flags with stains, gum and the odd crack, edged with granite kerbstones. Along them: street
 trees in grated pits, parking meters beside the kerbside parking, bus shelters with lit adverts on the
-avenues and street-name signs on junction corners. Traffic and parked cars spin and steer their wheels. Car light glows sit on each model's own lamps (measured when the kit is baked), and cars rest on the kerb-high paving when they mount a pavement.
+avenues and street-name signs on junction corners. Traffic and parked cars spin and steer their wheels. Car light glows sit on each model's own lamps (measured when the kit is baked), and cars rest on the kerb-high paving when they mount a pavement. Cars ride on springs: kerbs and steps compress the suspension (stiff and short on light sports cars, soft and long on vans and pickups) instead of throwing the car; only a sustained rise, a ramp or a crest, carries into a jump.
 
 ## People
 
