@@ -151,7 +151,7 @@ export function makeSignMaterial(U, tex) {
 const GLOW_KIND = {
   lamp: { col: [1, 0.8, 0.52], size: 1.6, day: 0, i: 3.5 },
   pool: { col: [1, 0.72, 0.42], size: 9, day: 0, i: 0.8 },
-  beacon: { col: [1, 0.15, 0.1], size: 2.8, day: 0.5, i: 4 },
+  beacon: { col: [1, 0.15, 0.1], size: 1.1, day: 0.06, i: 3 },
   amber: { col: [1, 0.66, 0.3], size: 1.3, day: 0, i: 2.5 },
   ring: { col: [1, 0.45, 0.2], size: 9, day: 0.12, i: 1.2 },
   neon: { col: [1, 0.45, 0.2], size: 3.2, day: 0, i: 1.4 },
@@ -367,12 +367,42 @@ function band(g, x0, z0, x1, z1, y0, y1, out, col, style = 12) {
   g.quad([x0 - out, y0, z0 - out], [x1 + out, y0, z0 - out], [x1 + out, y0, z1 + out], [x0 - out, y0, z1 + out], [col[0] * 0.7, col[1] * 0.7, col[2] * 0.7], [[0, 0], [0, 0], [0, 0], [0, 0]], [0, -1, 0]);
 }
 
+// A parapet: a low wall round the roof edge with a coping on top, open in the middle so the roof
+// itself shows. It can stand proud of the walls by `out`; its inner faces start at the roof (roofY).
+function parapet(g, x0, z0, x1, z1, y0, y1, out, wth, col, roofY, style = 12) {
+  const X0 = x0 - out, Z0 = z0 - out, X1 = x1 + out, Z1 = z1 + out;
+  const i0 = x0 + wth, k0 = z0 + wth, i1 = x1 - wth, k1 = z1 - wth;
+  const inner = [col[0] * 0.85, col[1] * 0.85, col[2] * 0.85], under = [col[0] * 0.6, col[1] * 0.6, col[2] * 0.6];
+  g.e.bdata = [style, 0.5, 0]; g.e.uv = [0, 0];
+  const Q = (a, b, c, d, n, cc = col) => g.quad(a, b, c, d, cc, null, n);
+  Q([X0, y0, Z0], [X1, y0, Z0], [X1, y1, Z0], [X0, y1, Z0], [0, 0, -1]);
+  Q([X1, y0, Z0], [X1, y0, Z1], [X1, y1, Z1], [X1, y1, Z0], [1, 0, 0]);
+  Q([X1, y0, Z1], [X0, y0, Z1], [X0, y1, Z1], [X1, y1, Z1], [0, 0, 1]);
+  Q([X0, y0, Z1], [X0, y0, Z0], [X0, y1, Z0], [X0, y1, Z1], [-1, 0, 0]);
+  Q([i0, roofY, k0], [i1, roofY, k0], [i1, y1, k0], [i0, y1, k0], [0, 0, 1], inner);
+  Q([i1, roofY, k0], [i1, roofY, k1], [i1, y1, k1], [i1, y1, k0], [-1, 0, 0], inner);
+  Q([i1, roofY, k1], [i0, roofY, k1], [i0, y1, k1], [i1, y1, k1], [0, 0, -1], inner);
+  Q([i0, roofY, k1], [i0, roofY, k0], [i0, y1, k0], [i0, y1, k1], [1, 0, 0], inner);
+  const up = [0, 1, 0];
+  Q([X0, y1, Z0], [X1, y1, Z0], [X1, y1, k0], [X0, y1, k0], up);
+  Q([X0, y1, k1], [X1, y1, k1], [X1, y1, Z1], [X0, y1, Z1], up);
+  Q([X0, y1, k0], [i0, y1, k0], [i0, y1, k1], [X0, y1, k1], up);
+  Q([i1, y1, k0], [X1, y1, k0], [X1, y1, k1], [i1, y1, k1], up);
+  if (out > 0) {
+    const dn = [0, -1, 0];
+    Q([X0, y0, Z0], [X1, y0, Z0], [X1, y0, z0], [X0, y0, z0], dn, under);
+    Q([X0, y0, z1], [X1, y0, z1], [X1, y0, Z1], [X0, y0, Z1], dn, under);
+    Q([X0, y0, z0], [x0, y0, z0], [x0, y0, z1], [X0, y0, z1], dn, under);
+    Q([x1, y0, z0], [X1, y0, z0], [X1, y0, z1], [x1, y0, z1], dn, under);
+  }
+}
+
 function detailBuilding(g, b, col, packed) {
   const u = (k) => (b.seed * 9.71 + k * 0.618) % 1;
   const W = b.x1 - b.x0, D = b.z1 - b.z0, top = b.gy + b.h;
   const trim = [Math.min(1, col[0] * 1.08 + 0.04), Math.min(1, col[1] * 1.08 + 0.04), Math.min(1, col[2] * 1.06 + 0.04)];
   if (b.style === ST.DECO || b.style === ST.OFFICE || b.style === ST.HOSP) {
-    if (b.h > 12 && !(b.tiers && b.tiers.length)) band(g, b.x0, b.z0, b.x1, b.z1, top - 0.2, top + 0.9, 0.35, trim);
+    if (b.h > 12 && !(b.tiers && b.tiers.length)) parapet(g, b.x0, b.z0, b.x1, b.z1, top - 0.2, top + 0.9, 0.35, 0.3, trim, top);
     const every = b.style === ST.OFFICE ? 3 : b.style === ST.HOSP ? 4 : 2;
     for (let f = every; f * 3.6 < b.h - 4; f += every) band(g, b.x0, b.z0, b.x1, b.z1, b.gy + f * 3.6 - 0.12, b.gy + f * 3.6 + 0.18, 0.22, trim);
     if (b.style !== ST.HOSP) band(g, b.x0, b.z0, b.x1, b.z1, b.gy + 3.3, b.gy + 3.7, 0.3, trim);
@@ -446,11 +476,11 @@ function detailBuilding(g, b, col, packed) {
     }
     const t = boxes[boxes.length - 1], yb = b.gy + t.y1;
     if (u(11) < 0.6) band(g, t.x0, t.z0, t.x1, t.z1, yb - 0.55, yb - 0.25, 0.06, u(12) < 0.5 ? [0.85, 0.95, 1] : [1, 0.85, 0.6], ST.NEON);
-    band(g, t.x0, t.z0, t.x1, t.z1, yb, yb + 1.1, 0, [0.2, 0.22, 0.24], ST.CONC);
+    parapet(g, t.x0, t.z0, t.x1, t.z1, yb, yb + 1.1, 0, 0.25, [0.2, 0.22, 0.24], yb, ST.CONC);
   }
   // Houses: a cornice, and balconies on some.
   if (b.style === ST.HOUSE || b.style === ST.VILLA) {
-    if (flat) band(g, b.x0, b.z0, b.x1, b.z1, top - 0.3, top + 0.35, 0.28, trim);
+    if (flat) parapet(g, b.x0, b.z0, b.x1, b.z1, top - 0.3, top + 0.35, 0.28, 0.25, trim, top);
     if (b.h > 7 && u(13) < 0.5) {
       const cw = CELLW[b.style], fh = b.style === ST.HOUSE ? 3 : 3.5, rail = u(14) < 0.5 ? trim : [col[0] * 0.72, col[1] * 0.72, col[2] * 0.7];
       let made = 0;
@@ -478,7 +508,7 @@ function detailBuilding(g, b, col, packed) {
   // Rooftop plant on flat roofs: air-con units, vents, a stair housing, sometimes a mast.
   if (flat && b.style !== ST.HOUSE && b.style !== ST.VILLA && W > 9 && D > 9) {
     const t = tiers ? b.tiers[b.tiers.length - 1] : { x0: b.x0, z0: b.z0, x1: b.x1, z1: b.z1, y1: b.h };
-    const ty = b.gy + t.y1 + (b.style === ST.GLASS || b.style === ST.LOGO ? (b.h > 20 ? 1.1 : 0) : !tiers && b.h > 12 && (b.style === ST.DECO || b.style === ST.OFFICE || b.style === ST.HOSP) ? 0.9 : 0);
+    const ty = b.gy + t.y1;
     const tw = t.x1 - t.x0, td = t.z1 - t.z0;
     if (tw > 6 && td > 6) {
       const grey = [0.7, 0.7, 0.68], dark = [0.42, 0.43, 0.42];

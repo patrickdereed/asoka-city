@@ -366,6 +366,8 @@ void main() {
     } else if (st == 6.) { wr = vec4(.04, .96, .42, .86); avg = .42; litP = .75; }
     else if (st == 7.) { wr = vec4(.03, .97, .3, .98); avg = .85; litP = .12; }
     else if (st == 8.) { wr = fl < .5 ? vec4(.05, .95, .05, .9) : vec4(.25, .75, .3, .8); avg = .45; litP = .7; }
+    // Houses and villas: no window in a ground-floor bay that has the front door.
+    if ((st == 3. || st == 8.) && fl < .5 && hash12(vec2(floor(uv.x), seed * 5.7)) < .3) wr = vec4(0.);
     // No half windows cut off by the roofline or parapet.
     if (st != 4. && st != 5. && (fl + wr.w) * fh > top - .1) wr = vec4(0.);
     if (st != 5. && st != 4.) wall *= mix(.6, 1., smoothstep(0., 5., uv.y));
@@ -434,7 +436,8 @@ void main() {
       float cur = max(step(cell.x, open), step(1. - open * .9, cell.x));
       inside = mix(inside, cc * (.8 + .2 * sin(cell.x * 70.)), cur);
     }
-    vec3 insideLit = inside * lcol * rg * 2.6 * lit * (.85 + .15 * step(.5, hash12(vec2(cx, fl) + floor(uTime * .1))));
+    // Now and then someone switches a lamp: each window on its own slow clock, never all at once.
+    vec3 insideLit = inside * lcol * rg * 2.6 * lit * (.85 + .15 * step(.5, hash12(vec2(cx, fl) + floor(uTime * .02 + h * 7.))));
     float lintel = recess > 0. ? mix(.55, 1., smoothstep(0., .45, wm.w - gp.y)) : 1.;
     vec3 insideDay = inside * amb(n) * .22 * lintel;
     float fres = .06 + .94 * pow(1. - abs(dot(V, n)), 4.);
@@ -496,7 +499,7 @@ void main() {
       float fascia = (1. - pier) * step(gy1 + .07, uv.y);
       vec3 fcol = tower ? vec3(.1, .11, .12) : lin(hs < .25 ? vec3(.17, .25, .26) : hs < .5 ? vec3(.62, .18, .16) : hs < .75 ? vec3(.12, .2, .36) : vec3(.83, .55, .2));
       float fx = fract(m.x / (bw * 2.)) * 16.;
-      float letter = fascia * step(2.78, uv.y) * step(uv.y, 3.1) * step(.15, fract(fx)) * step(.45, hash12(vec2(floor(fx), shop + seed))) * step(2., fx) * step(fx, 14.);
+      float letter = (tower ? 0. : 1.) * fascia * step(2.78, uv.y) * step(uv.y, 3.1) * step(.15, fract(fx)) * step(.45, hash12(vec2(floor(fx), shop + seed))) * step(2., fx) * step(fx, 14.);
       vec3 sn = granite * lc;
       sn = mix(sn, shopGlass, inGlass);
       sn = mix(sn, (tower ? vec3(.05) : vec3(.12, .11, .1)) * lc, sframe);
@@ -693,7 +696,8 @@ void main() {
     vec3 up = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
     wp = iPos + (right * position.x + up * position.y) * size;
   }
-  if (iP.z >= 0.) a *= .1 + .9 * step(.72, fract(uTime * .55 + iP.z));
+  // Aircraft warning lights: a soft half-second flash every two and a half seconds.
+  if (iP.z >= 0.) { float ph = fract(uTime * .4 + iP.z); a *= .05 + .95 * smoothstep(0., .06, ph) * (1. - smoothstep(.12, .24, ph)); }
   a *= exp(-pow(dist * uFogDen * .5, 2.));
   vA = a; vCol = iCol.rgb; vC = position.xy;
   gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.);
