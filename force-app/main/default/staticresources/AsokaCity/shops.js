@@ -52,7 +52,7 @@ export function openShop(kind, game) {
         items = [{ id: "armour", name: ARMOUR.name, sub: `Absorbs ${ARMOUR.amount} damage`, price: game.armor() >= 100 ? "Full" : fmtMoney(ARMOUR.price), cls: game.armor() >= 100 ? "owned" : game.money() < ARMOUR.price ? "cant" : "" }];
       } else {
         const slots = CATEGORIES[tab][1];
-        items = WEAPONS.filter((w) => slots.includes(w.slot)).map((w) => {
+        items = WEAPONS.filter((w) => slots.includes(w.slot) && (!w.unlock || ((game.save.story || {}).unlocks || []).includes(w.id) || game.save.weapons[w.id])).map((w) => {
           const own = !!game.save.weapons[w.id];
           const buyAmmo = own || w.throw;
           const price = buyAmmo ? (game.arsenal.ammoFull(w.id) ? "Full" : `${fmtMoney(w.ammoPrice)}`) : fmtMoney(w.price);

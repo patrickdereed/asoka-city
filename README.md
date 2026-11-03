@@ -3,8 +3,65 @@
 An open-world driving game set in an original, Asoka-themed 8 × 8 km city, delivered as a
 Visualforce tab. The whole city is generated from a seed in code, so the bundle is under 400 KB.
 
-**This build: free roam with an economy.** The city, driving, traffic, day and night, walking, money,
-weapons, and buildings you walk into. The Audit patrols, missions and the 25-hour main story come next.
+**This build: the story.** Go-Live is a 60-mission main story in five acts, with 12 side quests you can do
+any time, on top of the free-roam city: driving, traffic, day and night, walking, money, weapons, the shops
+and homes you walk into, and the Audit, the city's enforcers, who come after you when you make a scene.
+
+## Missions
+
+Contacts wait on the map (orange circles with their initial for the story, teal for side jobs) and in
+the street under a beam of light. Walk up and press E to hear the job. The objective is at the top of the
+screen, the route is drawn on the minimap and the full map (M), and whatever matters (the people to stop,
+the car to follow, the case to grab) has a marker over it. Fail and a banner says why: press Y to try again.
+
+| Act | Title | Contacts | Where |
+|---|---|---|---|
+| 1 | Onboarding | Rhea Okonkwo (Asoka's head of operations), Dex Marlow (Merge Conflict Motors) | The Console, Commit Row |
+| 2 | Sprint | Lupe Santana (the Standup club), Patch (Kickflip Skate Park), Rhea | Cadence Quarter, Sprint Gardens, the isles |
+| 3 | Pipeline | Moss Gantry (the docks), Inspector Ines Vale (the Audit), Dex | The Pipeline |
+| 4 | Code Freeze | Ivy Strand (a Brittle engineer who defects), Vale, Patch | Guideline Hills, the motel hideout |
+| 5 | Go-Live | Rhea, Ivy, Lupe, Vale | Brittle Systems HQ on Preview Point, the Go-Live Tower |
+
+The plot and every mission are summarised in `docs/story.md`. Side quests: Uptime Cabs (fares), Code Blue
+(patients to the clinic), Sprint Series (street races), Same-Day Deploy (courier runs), Bug Bounty (30 hidden
+bugs), On-Call (stop Brittle couriers), Export List (cars for Dex), Summit Run (hill climbs), Rooftop Run (on
+foot over the roofs), Rollback (lose the Audit against the clock), Night Shift (hold the club) and Postcards
+(photograph every landmark).
+
+Steps the story is built from: drive or walk somewhere (some against the clock), talk, pick things up and
+deliver them, give someone a ride, get into a particular car, tail a car without being spotted, chase one
+down, escort one, race, take out a crew, hold a spot against waves, stand still to plant or hack, photograph
+something (aim at it and hold), raise or lose the Audit, and buy a weapon. The vocabulary is fixed in
+`docs/missions-contract.md`; `story.js` is pure data in it, run by `missions.js`.
+
+**The people and cars in them** (`actors.js`) live in the crowd and the traffic, so everything you can do to a
+passer-by or a car you can do to them. The Legacy Crew and Brittle security stand guard until they see or hear
+you, then fight from a sensible range, in bursts, with a beat to react; allies follow you and shoot back;
+VIPs walk to your car and climb in. Mission cars drive themselves on the road network (A* over the junctions):
+they cruise, drive a route, flee, chase and ram (then back off), and race; crews climb out to fight when the
+car stops. Shots from other people can hit you, and your car: it smokes when it's badly hurt and burns out at
+the end, and Asoka's fleet service leaves you a replacement down the road.
+
+**The Audit** (`audit.js`): crimes it hears about raise an escalation level, shown as five pips under your
+health. Cruisers chase and ram at 1 and 2, and their officers will audit you (a fine) if they catch you on
+foot or boxed in; at 3 they're armed, at 4 with SMGs, and at 5 Brittle security joins in. Stay out of sight of
+every unit and the level steps down. They have to see you: each unit needs you in range with nothing in
+the way (or to be right beside you), and what one sees the rest hear on the radio. A crime is reported where
+it happened, so cruisers drive to the scene, not to you; once they lose sight of you they search round where
+you were last seen (the blue circle on the minimap). How long that takes to shake varies each time, and goes
+faster the further you get from the search. Hurting bystanders draws far more attention than fighting the
+Legacy Crew.
+
+**Money:** the story pays about $1.6M (the finale alone is $1,000,000), side quests about $315,000 and the
+envelopes and landmarks $64,000: enough to own every weapon, home and outfit. Finished side jobs stay open
+at half pay for running costs; the bug hunt and the postcards are one-offs.
+
+**New for the story:** seven buildings (`sites.js`): Brittle Systems HQ, the Audit's precinct, the Legacy Crew's
+yard, the Coldline data centre, Merge Conflict Motors, the Standup club and the Lazy Loader Motel. Six vehicles
+(`fleet.js`): the Audit cruiser, a Brittle security SUV, a freight box truck, an armoured vault van, a Code Blue
+ambulance and an Asoka courier van. Three weapons, sold at Breakpoint Arms once the story unlocks them: Silent
+Deploy (a suppressed pistol: no alarm, no escalation), Kill Switch (an EMP launcher that stalls every car near
+the shell) and Sticky Note (a remote charge that sticks to cars and walls; fire again to set it off).
 
 ## Climbing and landmarks
 
@@ -104,7 +161,10 @@ it swings on its front hinge while you open it, haul the driver out by the colla
 get up and run off down the pavement) and climb in. Press ? any time for every control (keyboard, mouse and
 gamepad); Esc pauses, with the same list and brightness and contrast sliders, saved per player and applied
 in the final pass (`post.js`). Each avatar is
-turned to face square to its hips and shoulders, not its splayed feet, so it runs straight.
+turned to face square to its hips and shoulders, not its splayed feet, so it runs straight. The gait plants
+each foot for most of the cycle and sweeps it back at exactly the body's speed (so feet don't slide), lands
+on the heel and pushes off the toes, keeps the sole level through the swing, and dips the hips over the
+planted leg.
 
 After dark the ten nearest lights are real: street lamps as point lights and headlights as spots
 (`lamps()` in `shaders.js`, picked each frame by `pickLamps` in `main.js`), lighting the street, the
@@ -135,6 +195,8 @@ swatch colours go in through the inverse to look right in game.
   - `weapons.js`, `arsenal.js`, `combat.js`: the arsenal, holding and firing, hit tests and explosions
   - `interiors.js`, `shops.js`: the rooms you walk into and what the shops sell
   - `people.js`, `looks.js`: the Rocketbox crowd and your character's hair, skin, eyes, nose, ears and tattoos
+  - `story.js`, `missions.js`, `actors.js`, `audit.js`: the story as data, the mission engine, mission people and cars, the Audit
+  - `sites.js`, `fleet.js`: the mission buildings and the fleet vehicles
 - `pages/AsokaCity.page`, `tabs/AsokaCity.tab-meta.xml`, `permissionsets/Asoka_City`: packaging. No Apex; the game reads no Salesforce data.
 
 ## Run and test
@@ -144,7 +206,12 @@ node test/serve.mjs          # http://localhost:8788 mirrors the Visualforce pag
 node test/world.test.js      # world generation: timing, connectivity, overlaps, decks
 node test/drive.test.js      # physics and traffic
 node test/climb.test.js      # fire escapes up and down, landmark prizes reachable
+node test/sites.test.js      # the mission buildings and their anchors
+node test/story.test.js      # every place in every mission resolves; routes; dialogue for every pronoun
 ```
+
+`test/autoplay.js` is a browser smoke test for the story: load it into the local page and run
+`autoplay()` to play every mission and side-quest stage by cheating through each step.
 
 ## Deploy
 

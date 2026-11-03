@@ -102,13 +102,37 @@ export class Audio {
     }
   }
 
-  shot(cls) {
+  // vol: 1 for the player's own gun; other people's shots fade with distance.
+  shot(cls, vol = 1) {
+    if (vol < 0.03) return;
     const P = {
+      silent: [0.14, 5200, 0.07, 0],
       pistol: [0.55, 3200, 0.16, 140], revolver: [0.8, 2400, 0.3, 110], smg: [0.4, 3600, 0.1, 150],
       shotgun: [0.9, 1800, 0.38, 80], rifle: [0.6, 3000, 0.18, 120], sniper: [0.95, 2200, 0.55, 70],
       lmg: [0.6, 2600, 0.16, 110], minigun: [0.32, 3400, 0.07, 160], launcher: [0.5, 900, 0.3, 90], rocket: [0.6, 700, 0.6, 60],
     }[cls] || [0.5, 3000, 0.15, 130];
-    this.burst(P[0], P[1] * (0.9 + Math.random() * 0.2), P[2], P[3]);
+    this.burst(P[0] * vol, P[1] * (0.9 + Math.random() * 0.2), P[2], P[3]);
+  }
+
+  // The Audit's siren: a two-tone wail that swells with how close the nearest cruiser is (0 = off).
+  siren(k) {
+    if (!this.ctx) return;
+    const c = this.ctx;
+    if (!this.sirenO) {
+      this.sirenO = c.createOscillator(); this.sirenO.type = "sawtooth";
+      const f = c.createBiquadFilter(); f.type = "lowpass"; f.frequency.value = 1800;
+      this.sirenG = c.createGain(); this.sirenG.gain.value = 0;
+      this.sirenO.connect(f); f.connect(this.sirenG); this.sirenG.connect(this.master); this.sirenO.start();
+    }
+    const t = c.currentTime;
+    this.sirenO.frequency.setTargetAtTime(Math.floor(t * 1.6) % 2 ? 960 : 720, t, 0.04);
+    this.sirenG.gain.setTargetAtTime(0.05 * k, t, 0.15);
+  }
+
+  // Mission cues: a start sting, passed and failed.
+  cue(kind) {
+    const N = { start: [523, 659, 784], pass: [523, 659, 784, 1046], fail: [392, 330, 262], step: [880, 1175] }[kind] || [660];
+    N.forEach((f, i) => this.blip(f, kind === "pass" ? 0.32 : 0.2, 0.11, "triangle", i * (kind === "step" ? 0.07 : 0.13)));
   }
 
   swing(hit) { this.burst(hit ? 0.5 : 0.18, hit ? 700 : 2500, hit ? 0.18 : 0.12, hit ? 90 : 0); }

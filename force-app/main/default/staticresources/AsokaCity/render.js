@@ -85,7 +85,9 @@ export function makeMaterials(U) {
     slab: mk(S.GROUND_VS, S.GROUND_FS, { vertexColors: true, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }),
     road: mk(S.ROAD_VS, S.ROAD_FS, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }),
     build: mk(S.BUILD_VS, S.BUILD_FS, { vertexColors: true }),
-    prop: mk(S.PROP_VS, S.PROP_FS, { vertexColors: true, side: THREE.DoubleSide, uniforms: { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 0 } } }),
+    // The livery sampler is bound (to nothing) so it never shares a texture unit with the shadow map:
+    // left unset it defaults to unit 0, a type clash that makes WebGL drop the draw.
+    prop: mk(S.PROP_VS, S.PROP_FS, { vertexColors: true, side: THREE.DoubleSide, uniforms: { ...U, uBrake: { value: 0 }, uLights: { value: 0 }, uGloss: { value: 0 }, uLivery: { value: null }, uUseLivery: { value: 0 }, uPaint: { value: new THREE.Vector3(1, 1, 1) } } }),
     glow: mk(S.GLOW_VS, S.GLOW_FS, { transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -16 }),
   };
   m.road.extensions = { derivatives: true };
@@ -421,7 +423,7 @@ function detailBuilding(g, b, col, packed) {
       }
     }
   }
-  if (!b.roof && (b.style === ST.DECO || b.style === ST.OFFICE) && b.h > 14 && b.h < 50 && u(7) < 0.45 && W > 10 && D > 10) {
+  if (!b.roof && !b.bareRoof && (b.style === ST.DECO || b.style === ST.OFFICE) && b.h > 14 && b.h < 50 && u(7) < 0.45 && W > 10 && D > 10) {
     // Water tank on legs.
     const x = lerp(b.x0 + 4, b.x1 - 4, u(8)), z = lerp(b.z0 + 4, b.z1 - 4, u(9));
     g.e.bdata = [ST.STEEL, 0.5, 0]; g.e.uv = [0, 0];
@@ -506,7 +508,8 @@ function detailBuilding(g, b, col, packed) {
     band(g, x - 0.08, z - 0.08, x + 0.88, z + 0.88, top + rh + 0.9, top + rh + 1.05, 0, [0.35, 0.33, 0.32], ST.CONC);
   }
   // Rooftop plant on flat roofs: air-con units, vents, a stair housing, sometimes a mast.
-  if (flat && b.style !== ST.HOUSE && b.style !== ST.VILLA && W > 9 && D > 9) {
+  // (Mission buildings with something on the roof, a helipad or a terrace, keep it clear.)
+  if (flat && !b.bareRoof && b.style !== ST.HOUSE && b.style !== ST.VILLA && W > 9 && D > 9) {
     const t = tiers ? b.tiers[b.tiers.length - 1] : { x0: b.x0, z0: b.z0, x1: b.x1, z1: b.z1, y1: b.h };
     const ty = b.gy + t.y1;
     const tw = t.x1 - t.x0, td = t.z1 - t.z0;
@@ -535,7 +538,7 @@ function detailBuilding(g, b, col, packed) {
     }
   }
   const tall = b.tiers && b.tiers.length ? b.tiers[b.tiers.length - 1] : null;
-  if (b.style === ST.GLASS && b.h > 70) {
+  if (b.style === ST.GLASS && b.h > 70 && !b.bareRoof) {
     const t = tall || b, ty = b.gy + (tall ? tall.y1 : b.h);
     const cx = (t.x0 + t.x1) / 2, cz = (t.z0 + t.z1) / 2;
     g.e.bdata = [ST.STEEL, 0.5, 0]; g.e.uv = [0, 0];
@@ -560,7 +563,7 @@ function buildBuildings(world, data) {
     for (const t of b.tiers || []) boxWalls(g, t.x0, t.z0, t.x1, t.z1, b.gy + t.y0, b.gy + t.y1, b.gy, col, b.style, packed, t.y1, roofCol, 0);
     detailBuilding(g, b, col, packed);
     // Rooftop plant on offices and towers.
-    if (!b.roof && (b.style === ST.OFFICE || b.style === ST.GLASS || b.style === ST.HOSP) && b.x1 - b.x0 > 14) {
+    if (!b.roof && !b.bareRoof && (b.style === ST.OFFICE || b.style === ST.GLASS || b.style === ST.HOSP) && b.x1 - b.x0 > 14) {
       const tt = b.tiers && b.tiers.length ? b.tiers[b.tiers.length - 1] : { x0: b.x0, z0: b.z0, x1: b.x1, z1: b.z1, y1: b.h };
       const ty = b.gy + tt.y1;
       const u = (k) => (b.seed * 7.3 + k * 0.37) % 1;

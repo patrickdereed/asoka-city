@@ -22,6 +22,9 @@ import { interiorFor } from "./interiors.js";
 import { openShop, lookName } from "./shops.js";
 import { WEAPON, weaponGeometry, fmtMoney } from "./weapons.js";
 import { dress, styleOf, SKIN_TONES, EYE_COLOURS, HAIR_COLOURS, HAIR_STYLES, hairName, SLIDERS, SPOTS, TATTOOS } from "./looks.js";
+import { Actors } from "./actors.js";
+import { Audit } from "./audit.js";
+import { Missions } from "./missions.js";
 
 THREE.ColorManagement.enabled = false;
 
@@ -81,6 +84,7 @@ let inside = null, shop = null, previewMesh = null, hitT = 0, aimPoint = new THR
 let drops = [], ammoGeo = null;   // what knocked-out people dropped: cash, guns, ammo boxes
 let cashMesh, boards = new Map(), deadT = 0, pmat, carNow = { k: -1, color: null, livery: true };
 let doorPivot = null, doorInfo = null, doorOpen = 0, jack = null, thrown = [], timeScale = 1;
+let actors, audit, missions, ownStart = 0, asokaTex = null, carTag = null, lastAim = null, carFireT = 0, keyE = false;
 
 async function boot() {
   setLoading("Generating Asoka City");
@@ -146,6 +150,12 @@ async function boot() {
     traffic.types = bodies.map((b) => b.spec);
     traffic.cabType = Math.max(0, kits.findIndex((k) => k.id === "toyama"));
   }
+  // The fleet (Audit cruisers, trucks, vans): drawn as their own meshes, after the instanced kits.
+  ownStart = kits.length;
+  try {
+    const F = await import("./fleet.js");
+    for (const k of F.buildFleet(kits)) kits.push(k);
+  } catch (e) { console.warn("fleet unavailable", e); }
   crowd = new Crowd(world, scene, U, districtAt);
   crowd.max = QUALITY[prefs.quality].crowd;
   // Running someone over: a thump, a jolt, and it counts as putting them down.
@@ -162,6 +172,38 @@ async function boot() {
   combat.onPlayerHit = (dmg) => hurtPlayer(dmg);
   arsenal = new Arsenal(save, mats, U, combat, audio);
   scene.add(arsenal.mesh);
+  // Missions: the people and cars they spawn, the Audit, and the story itself.
+  actors = new Actors({ world, scene, U, mats, crowd, traffic, combat, audio, kits, ownStart });
+  actors.onHitMe = (dmg) => hurtPlayer(dmg);
+  actors.onPickup = (it) => { audio.cash(true); if (it.kind === "cash" && it.value) earn(it.value); hud.toast(it.kind === "cash" ? `+${fmtMoney(it.value)}` : `Picked up the ${it.kind === "drive" ? "hard drive" : it.kind === "case" ? "briefcase" : it.kind}.`, 2); };
+  actors.onBoard = (p) => hud.toast(p.team === "vip" ? "They're in." : "Your backup is in the car.", 1.6);
+  audit = new Audit({ world, actors, audio, hud });
+  audit.onBusted = () => {
+    const fine = Math.min(save.money, Math.max(200, Math.round(save.money * 0.08)));
+    save.money -= fine;
+    hud.toast(`Audited. The fine: ${fmtMoney(fine)}.`, 4);
+    missions && missions.playerDown("You were audited.");
+  };
+  combat.onCrime = (kind, who, silent) => {
+    if (silent && kind !== "car") return;
+    const at = who && who.x != null ? who : combat.player;
+    audit.crime(kind, at, who && who.obj ? who.obj : who);
+    if (kind === "shots" || kind === "blast") actors.noise(at.x, at.z, kind === "blast" ? 70 : 45);
+  };
+  combat.onCarHit = (dmg) => damageCar(dmg);
+  let story = {};
+  try { story = await import("./story.js"); } catch (e) { console.warn("story unavailable", e); }
+  missions = new Missions({
+    world, actors, audit, hud, audio, save, scene, U,
+    me: () => (mode === "foot" ? { x: walker.x, y: walker.y, z: walker.z } : { x: player.x, y: player.y, z: player.z }),
+    driving: () => mode === "drive" && !inside,
+    car: () => player, carTag: () => carTag,
+    aim: () => lastAim,
+    earn: (n) => earn(n), setHour: (h) => (hour = h), saveNow: () => saveNow(),
+    name: () => (prefs.character && prefs.character.name) || "", pronouns: () => (prefs.character && prefs.character.pronouns) || "they/them",
+    pressed: (code) => (code === "KeyE" ? keyE : input.hit(code)),
+    teleport: (x, z) => teleport(x, z),
+  }, story);
   if (prefs.character) {
     if (!save.look) save.look = prefs.character.look;
     if (!save.outfits.includes(save.look)) save.outfits.push(save.look);
@@ -347,10 +389,10 @@ function startAtHome(v) {
 const CONTROLS = [
   ["On foot", [["W A S D", "Left stick", "Walk"], ["Shift", "A", "Jog"], ["Hold mouse, ← →", "Right stick", "Look (recentres on release)"], ["Right mouse, K", "LT", "Aim"],
     ["Left mouse, Space (aiming)", "RT (with LT)", "Fire, punch"], ["R", "B", "Reload"], ["Q, Z, wheel", "RB, LB", "Next, previous weapon"], ["1 to 8, 0", "", "Weapon slot, fists"],
-    ["E", "X", "Go into a shop or home, use"], ["F", "Y", "Get in, steal or break into a car"]]],
+    ["E", "X", "Go into a shop or home, use; talk to a contact"], ["F", "Y", "Get in, steal or break into a car"]]],
   ["Driving", [["W, ↑", "RT", "Accelerate"], ["S, ↓", "LT", "Brake, reverse"], ["A D, ← →", "Left stick", "Steer"], ["Hold mouse", "Right stick", "Look around"], ["Space", "A", "Handbrake"],
     ["H", "", "Horn"], ["F", "Y", "Get out"], ["R", "B", "Back on the road"]]],
-  ["Any time", [["C", "", "Camera"], ["M", "Back", "Map"], ["[ ]", "", "Hour back, forward"], ["?", "", "Show or hide this list"], ["Esc", "Start", "Pause, picture settings"]]],
+  ["Any time", [["C", "", "Camera"], ["M", "Back", "Map"], ["Y", "", "Retry a failed mission"], ["[ ]", "", "Hour back, forward"], ["?", "", "Show or hide this list"], ["Esc", "Start", "Pause, picture settings"]]],
 ];
 const keyCaps = (t) => t ? t.split(", ").map((k) => `<kbd>${esc(k)}</kbd>`).join(" ") : "";
 function controlsHTML() {
@@ -610,7 +652,13 @@ function carBody(body, spots, wheelGeo, split = null) {
 function setPlayerCar(k, color, livery = false) {
   const kit = kits[k];
   carNow = { k, color, livery };
-  player.setSpec({ ...PLAYER_CAR, L: kit.spec.L, W: kit.spec.W, wr: kit.spec.wr });
+  player.setSpec({ ...PLAYER_CAR, L: kit.spec.L, W: kit.spec.W, wr: kit.spec.wr, mass: kit.spec.mass > PLAYER_CAR.mass * 1.6 ? kit.spec.mass : PLAYER_CAR.mass });
+  player.hp = player.hp0 = kit.spec.mass > 4000 ? 1800 : kit.spec.mass > 2000 ? 1200 : 1000;
+  player.smoke = 0;
+  // The Asoka car wears the fleet livery; fleet vehicles their own.
+  if (!asokaTex) asokaTex = pmat.uniforms.uLivery.value;
+  pmat.uniforms.uLivery.value = kit.livery || asokaTex;
+  if (kit.livery) livery = true;
   pmat.uniforms.uUseLivery.value = livery ? 1 : 2;
   if (!livery) pmat.uniforms.uPaint.value.set(...hex(color));
   carBody(kit.body, kit.wheels, kit.wheelGeo, splitDoor(kit));
@@ -663,7 +711,7 @@ function carNear(x, z) {
   for (const c of traffic.cars) {
     if (c.burnt || Math.abs(c.x - x) > 8 || Math.abs(c.z - z) > 8) continue;
     const d = carGap(x, z, c, c.hl, c.hw);
-    if (d < bd) { bd = d; best = { kind: c.mode === "parked" ? "left" : "traffic", c }; }
+    if (d < bd) { bd = d; best = { kind: c.mode === "parked" || (c.ai && (c.tag || c.ai === "park" || c.arrived || c.disabled || c.v < 0.5)) ? "left" : "traffic", c }; }
   }
   for (const v of city.views.values()) {
     if (!v.street) continue;
@@ -695,18 +743,27 @@ function takeCar(t) {
   } else {
     const c = t.c;
     traffic.cars.splice(traffic.cars.indexOf(c), 1);
-    next = { k: c.type, color: c.color, livery: !!c.livery, x: c.x, z: c.z, yaw: c.yaw };
+    next = { k: c.type, color: c.color, livery: !!c.livery, x: c.x, z: c.z, yaw: c.yaw, tag: c.tag || null, hp: c.ai ? c.hp / c.hp0 : 1 };
+    if (c.ai) { c.taken = true; if (c.mesh) c.mesh.visible = false; c.gone = true; if (c.mesh) scene.remove(c.mesh); }
     if (t.kind === "traffic") {
       crowd.alarm(c.x, c.z, 25, c.x, c.z);
+      if (!c.ai || !c.tag) combat.onCrime("jack", { x: c.x, z: c.z });
     }
   }
   const t0 = kits[old.k] && traffic.types.indexOf(kits[old.k].spec);
-  if (t0 >= 0) {
+  // A mission car, or one of the fleet, stays a mission car when you leave it.
+  if (carTag || old.k >= ownStart) {
+    const c = actors.spawnCar({ kit: kits[old.k].id, tag: carTag, color: old.color ?? 0xfffdf9, ai: "park", blip: !!carTag }, old.x, old.z, old.yaw);
+    c.x = old.x; c.z = old.z; c.y = old.y; c.yaw = old.yaw;
+    c.hp = c.hp0 * clamp(player.hp / (player.hp0 || 1000), 0.05, 1);
+  } else if (t0 >= 0) {
     const sp = traffic.types[t0];
     traffic.cars.push({ mode: "parked", type: t0, spec: sp, m: sp.mass, color: old.color ?? 0xfffdf9, livery: old.livery,
       x: old.x, y: old.y, z: old.z, yaw: old.yaw, v: 0, vx: 0, vz: 0, r: 0, stuck: 0, ignore: 0, hl: sp.L / 2, hw: sp.W / 2, spin: 0, brake: false });
   }
   setPlayerCar(next.k, next.color, next.livery);
+  if (next.hp != null) player.hp = player.hp0 * clamp(next.hp, 0.05, 1);
+  carTag = next.tag || null;
   player.place(next.x, next.z, next.yaw);
 }
 
@@ -866,7 +923,7 @@ function updateThrown(dt) {
 function toggleMap(open = !mapOpen) {
   mapOpen = open;
   $("bigmap").classList.toggle("hidden", !open);
-  if (open) { releaseMouse(); bigmap.draw(mode === "foot" ? walker : player, world.venues, save.homes, world.landmarks, save.landmarks); }
+  if (open) { releaseMouse(); bigmap.draw(mode === "foot" ? walker : player, world.venues, save.homes, world.landmarks, save.landmarks, { contacts: hud.contacts, goal: hud.goal, gps: hud.gps }); }
 }
 
 function respawn() {
@@ -875,6 +932,44 @@ function respawn() {
   const p = world.edgePoint(r.e, r.s, r.e.laneOff[0]);
   player.place(p.x, p.z, Math.atan2(-p.tx, -p.tz));
   hud.toast("Back on the road.", 2);
+}
+
+// Somewhere else at once (a mission retry): on foot there, with the car at the nearest kerb.
+function teleport(x, z) {
+  if (inside) leaveVenue(true);
+  const r = world.nearestRoad(x, z);
+  if (r) { const p = world.edgePoint(r.e, clamp(r.s, r.e.sA, r.e.sB), r.e.laneOff[0]); player.place(p.x, p.z, Math.atan2(-p.tx, -p.tz)); }
+  walker.place(x, z, walker.yaw);
+  if (mode !== "foot") { mode = "foot"; me.holder.visible = true; }
+  camYaw = walker.yaw;
+}
+
+// The car takes hits from crashes, gunfire and blasts. Badly hurt it smokes; at nothing it burns out, you
+// bail, and Asoka's fleet service leaves a replacement round the corner.
+function damageCar(dmg) {
+  if (player.hp == null) player.hp = player.hp0 = 1000;
+  if (player.hp <= 0) return;
+  player.hp -= dmg;
+  if (player.hp <= 0) {
+    player.hp = 0;
+    const x = player.x, y = player.y, z = player.z, yaw = player.yaw, k = carNow.k, tag = carTag;
+    combat.explode(x, y + 0.8, z, 1.1, null, "npc");
+    // The burnt-out shell stays where it was.
+    const c = actors.spawnCar({ kit: kits[k].id, tag, color: 0x2a2624, ai: "park", blip: false }, x, z, yaw);
+    c.x = x; c.z = z; c.y = y; c.yaw = yaw; c.burnt = true; c.hp = 0;
+    if (c.mat) { c.mat.uniforms.uUseLivery.value = 2; c.mat.uniforms.uPaint.value.set(0.16, 0.15, 0.14); }
+    if (mode === "drive") {
+      mode = "foot"; me.holder.visible = true;
+      walker.place(x + Math.cos(yaw) * 2.5, z - Math.sin(yaw) * 2.5, yaw);
+      hurtPlayer(25);
+    }
+    carTag = null;
+    const r = world.nearestRoad(x - Math.sin(yaw) * -45, z - Math.cos(yaw) * -45);
+    const pk = kits.findIndex((q) => q.id === PLAYER_KIT);
+    if (pk >= 0) setPlayerCar(pk, null, true);
+    if (r) { const p = world.edgePoint(r.e, clamp(r.s, r.e.sA, r.e.sB), r.e.laneOff[0]); player.place(p.x, p.z, Math.atan2(-p.tx, -p.tz)); }
+    hud.toast("That car's done for. Asoka fleet services left a replacement just down the road.", 4);
+  }
 }
 
 // ---------------------------------------------------------------------------- money and health
@@ -896,6 +991,8 @@ function hurtPlayer(dmg) {
 // Knocked out: wake at the nearest Meridian Clinic with a bill.
 function knockedOut() {
   save.hp = 0; deadT = 3.2;
+  if (missions) missions.playerDown("You were rolled back.");
+  if (audit) audit.set(0);
   releaseMouse();
   const ov = document.createElement("div"); ov.className = "wasted"; ov.innerHTML = "<b>ROLLED BACK</b>"; ov.id = "ko";
   $("ac").appendChild(ov);
@@ -1149,6 +1246,9 @@ function tick(dt) {
   }
 
   const inp = mode === "drive" ? input.drive(dt) : { throttle: 0, brake: 1, steer: 0, handbrake: true };
+  // Stalled by a Kill Switch pulse.
+  if (player.emp > 0) { player.emp -= dt; inp.throttle = 0; }
+  keyE = false;
   if (!inside) {
     acc += dt;
     while (acc >= DT) { player.step(DT, inp); acc -= DT; }
@@ -1194,6 +1294,7 @@ function tick(dt) {
     const chest = new THREE.Vector3(walker.x, walker.y + 1.4, walker.z);
     const aimDir = aimPoint.clone().sub(chest).normalize();
     if (w.range <= 3 || w.throw) aimDir.copy(cd);
+    lastAim = { aiming: aiming && !inside, from: camPos.clone(), dir: cd.clone() };
     const res = arsenal.update(dt, { person: me, aiming, held: cb.held && aiming, pressed: cb.pressed && aiming, aimPoint, aimDir, inside: !!inside });
     if (res && res.kick) { camPitch += res.kick; camYaw += (Math.random() - 0.5) * res.kick * 0.5; }
     if (res && res.hits) hitT = 0.15;
@@ -1207,7 +1308,10 @@ function tick(dt) {
       if (input.hit("KeyE", 2) && s) useSpot(s);
     } else {
       const v = venueNear(walker.x, walker.z);
-      if (v) {
+      if (!v && missions && missions.prompt) {
+        prompt = missions.prompt;
+        keyE = input.hit("KeyE", 2);
+      } else if (v) {
         const owned = save.homes.includes(v.id);
         prompt = v.kind === "home" ? (owned ? `<kbd>E</kbd> Go home · ${esc(v.name)}` : `<kbd>E</kbd> View ${esc(v.name)} · for sale ${fmtMoney(v.price)}`) : `<kbd>E</kbd> Enter ${esc(v.name)}`;
         if (input.hit("KeyE", 2)) enterVenue(v);
@@ -1219,19 +1323,35 @@ function tick(dt) {
   } else {
     arsenal.place(me, false);
     combat.player = { x: player.x, y: player.y + 1, z: player.z };
+    lastAim = null;
+    if (missions && missions.prompt && !inside) prompt = missions.prompt;
   }
+  combat.foot = onFoot && !inside ? { x: walker.x, y: walker.y, z: walker.z } : null;
+  combat.driving = mode === "drive";
   if (inside && inside.keeper) inside.keeper.update(dt, 0);
 
   if (!inside) {
     traffic.update(dt, mode === "drive" ? player : { x: walker.x, z: walker.z, hl: 0.5 }, focus.x, focus.z, 140, 470);
     traffic.collidePlayer(player);
+    const actx = { me: mode === "foot" ? { x: walker.x, y: walker.y, z: walker.z } : { x: player.x, y: player.y, z: player.z }, car: player, driving: mode === "drive", speed: player.speed };
+    actors.update(dt, actx);
+    audit.update(dt, actx);
     crowd.update(dt, camera.position, mode === "drive" ? player : null, mode === "foot" ? walker : null);
+    actors.place(dt, U.uNight.value);
     collectCash(mode === "drive" ? player : walker, mode === "drive" ? 2.6 : 1.3);
     collectDrops(mode === "drive" ? player : walker, mode === "drive" ? 2.6 : 1.3);
     discover(mode === "drive" ? player : walker);
   }
   combat.update(dt, camera, renderer.getDrawingBufferSize(v3.set(0, 0, 0)).y);
+  if (!inside && missions) missions.update(dt);
+  hud.heat(audit.level, audit.seen);
+  // A badly damaged car smokes.
+  if (player.hp != null && player.hp < player.hp0 * 0.35 && Math.random() < dt * (player.hp < player.hp0 * 0.15 ? 14 : 5)) {
+    const fx = -Math.sin(player.yaw), fz = -Math.cos(player.yaw);
+    combat.puff(player.x + fx * player.hl * 0.8, player.y + 0.9, player.z + fz * player.hl * 0.8, 0.7, 2.2, player.hp < player.hp0 * 0.15 ? [0.2, 0.19, 0.18] : [0.6, 0.6, 0.58], 1.2);
+  }
   for (const ev of player.events) {
+    if (ev.type === "impact" && ev.mag > 5 && time - (player.hitAt || 0) > 0.35) { player.hitAt = time; damageCar((ev.mag - 5) * (ev.kind === "car" ? 12 : 9)); }
     if (ev.type === "impact" || ev.type === "land") { audio.bang(ev.mag); shake = Math.min(1, shake + ev.mag / 20); }
     if (ev.type === "knock") audio.bang(ev.mag, "knock");
   }
@@ -1599,6 +1719,8 @@ function render(dt) {
     if (Math.hypot(c.x - camera.position.x, c.z - camera.position.z) > 420) continue;
     lights(c.x, c.y, c.z, c.yaw, c.hl, c.hw, c.brake, false, c.burnt, kits[c.type]);
   }
+  // Roof beacons on cruisers and ambulances, and the Asoka car's own when it's a fleet vehicle.
+  if (actors) actors.glows((x, y, z, col) => { if (n < 880) setGlow(carGlow, n++, x, y, z, col, 0.25, 0.55, 0, -1, 4.5, y); });
   // Door markers for the shops and homes close by, and the cash envelopes.
   const fp = mode === "foot" ? walker : player;
   for (const v of world.venues) {
@@ -1653,7 +1775,15 @@ window.__ac = {
   scene, camera, get me() { return me; }, get walker() { return walker; }, get crowd() { return crowd; }, toggleFoot: () => toggleFoot(), get post() { return post; }, get U() { return U; },
   get world() { return world; }, get player() { return player; }, get traffic() { return traffic; }, get city() { return city; }, setHour: (h) => (hour = h), get renderer() { return renderer; },
   save, get arsenal() { return arsenal; }, get combat() { return combat; }, get inside() { return inside; }, enterVenue: (v) => enterVenue(v), leaveVenue: () => leaveVenue(), showShop: (k) => showShop(k), closeShop: () => closeShop(),
-  get drops() { return drops; },
+  get drops() { return drops; }, get actors() { return actors; }, get audit() { return audit; }, get missions() { return missions; }, get kits() { return kits; },
+  get carTag() { return carTag; }, damageCar: (n) => damageCar(n), teleport: (x, z) => teleport(x, z),
+  takeCar: (c) => { takeCar({ kind: "left", c }); mode = "drive"; me.holder.visible = false; }, get mode() { return mode; },
+  // Start a story mission or side-quest stage by id, from wherever the player is.
+  startMission: (id, stage = 0) => {
+    const m = missions.MAIN.find((q) => q.id === id), q = missions.SIDE.find((x) => x.id === id);
+    const me0 = missions.g.me();
+    missions.start(m ? { main: true, def: m, x: me0.x, z: me0.z } : { main: false, def: q, stage, x: me0.x, z: me0.z });
+  },
   setCam: (yaw, pitch) => { camYaw = yaw; camPitch = pitch; }, get state() { return state; }, holdCam: (h) => { camHold = h; },
   showCreator: (p) => showCreator(p), set timeScale(k) { timeScale = k; }, get jack() { return jack; }, dress: (s) => dress(me, s), get prefs() { return prefs; },
 };

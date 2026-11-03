@@ -13,6 +13,7 @@ export const WEAPONS = [
   { id: "hotfix9", name: "Hotfix 9", kind: "Compact 9 mm pistol", cls: "pistol", slot: 2, price: 500, dmg: 24, rate: 4, mag: 12, ammo: 96, ammoPack: 24, ammoPrice: 40, spread: 0.012, range: 90, reload: 1.2 },
   { id: "rootcause", name: "Root Cause .44", kind: "Revolver", cls: "revolver", slot: 2, price: 1400, dmg: 68, rate: 1.6, mag: 6, ammo: 48, ammoPack: 12, ammoPrice: 70, spread: 0.008, range: 120, reload: 2.2 },
   { id: "burstmode", name: "Burst Mode", kind: "Machine pistol", cls: "pistol", slot: 2, price: 2200, dmg: 18, rate: 14, auto: true, mag: 20, ammo: 160, ammoPack: 40, ammoPrice: 60, spread: 0.035, range: 70, reload: 1.4 },
+  { id: "silentdeploy", name: "Silent Deploy", kind: "Suppressed pistol", cls: "pistol", slot: 2, price: 2600, dmg: 30, rate: 3, mag: 15, ammo: 90, ammoPack: 15, ammoPrice: 60, spread: 0.01, range: 85, reload: 1.4, silent: true, unlock: true },
 
   { id: "batchjob", name: "Batch Job", kind: "Micro SMG", cls: "smg", slot: 3, price: 1900, dmg: 17, rate: 13, auto: true, mag: 30, ammo: 240, ammoPack: 60, ammoPrice: 70, spread: 0.04, range: 70, reload: 1.6 },
   { id: "asyncqueue", name: "Async Queue", kind: "Tactical SMG", cls: "smg", slot: 3, price: 3800, dmg: 21, rate: 12, auto: true, mag: 32, ammo: 256, ammoPack: 64, ammoPrice: 90, spread: 0.022, range: 95, reload: 1.8, long: true },
@@ -29,10 +30,12 @@ export const WEAPONS = [
 
   { id: "bulkapi", name: "Bulk API", kind: "Light machine gun", cls: "lmg", slot: 7, price: 18000, dmg: 34, rate: 11, auto: true, mag: 100, ammo: 500, ammoPack: 100, ammoPrice: 300, spread: 0.03, range: 170, reload: 4.2, long: true },
   { id: "cascade", name: "Cascade", kind: "Grenade launcher", cls: "launcher", slot: 7, price: 24000, dmg: 160, rate: 1.4, mag: 6, ammo: 30, ammoPack: 6, ammoPrice: 450, range: 60, reload: 3.4, long: true, proj: "shell" },
+  { id: "killswitch", name: "Kill Switch", kind: "EMP launcher", cls: "launcher", slot: 7, price: 15000, dmg: 0, rate: 0.8, mag: 3, ammo: 15, ammoPack: 3, ammoPrice: 400, range: 80, reload: 3, long: true, proj: "emp", unlock: true },
   { id: "harddelete", name: "Hard Delete", kind: "Rocket launcher", cls: "rocket", slot: 7, price: 32000, dmg: 260, rate: 0.6, mag: 1, ammo: 12, ammoPack: 3, ammoPrice: 600, range: 300, reload: 2.8, long: true, proj: "rocket" },
   { id: "dataloader", name: "Data Loader", kind: "Rotary minigun", cls: "minigun", slot: 7, price: 60000, dmg: 26, rate: 30, auto: true, mag: 500, ammo: 1500, ammoPack: 500, ammoPrice: 900, spread: 0.045, range: 150, reload: 5, long: true, spin: true },
 
   { id: "mergeconflict", name: "Merge Conflict", kind: "Fragmentation grenade", cls: "grenade", slot: 8, price: 0, dmg: 180, rate: 1, mag: 1, ammo: 20, ammoPack: 5, ammoPrice: 500, range: 40, reload: 0.6, proj: "grenade", throw: true },
+  { id: "stickynote", name: "Sticky Note", kind: "Remote charge", cls: "grenade", slot: 8, price: 0, dmg: 220, rate: 1.2, mag: 1, ammo: 8, ammoPack: 4, ammoPrice: 700, range: 25, reload: 0.6, proj: "sticky", throw: true, remote: true, unlock: true },
 ];
 export const WEAPON = Object.fromEntries(WEAPONS.map((w) => [w.id, w]));
 export const ARMOUR = { name: "Body armour", price: 500, amount: 100 };
@@ -790,6 +793,119 @@ const BUILD = {
     matte(g);
     return null;
   },
+  // Silent Deploy: the compact pistol with a sand slide, a threaded barrel, a long can and a low red dot.
+  silentdeploy(g, w) {
+    const m = BUILD.pistol(g, w);
+    const [, y, zm] = m;
+    // A sand cover plate on the front of the slide, so it reads apart from the Hotfix.
+    matte(g);
+    g.box(0, y + 0.0172, -0.1, 0.0255, 0.0016, 0.08, SAND);
+    for (const s of [-1, 1]) g.box(s * 0.0154, y + 0.004, -0.085, 0.0012, 0.012, 0.06, SAND2);
+    // Thread protector and adaptor.
+    metal(g);
+    tubeZ(g, 0, y, zm + 0.002, zm - 0.012, 0.0072, STEEL, 12);
+    for (let k = 0; k < 4; k++) tubeZ(g, 0, y, zm - 0.001 - k * 0.003, zm - 0.0025 - k * 0.003, 0.0078, BRUSH, 12);
+    // The suppressor: a tube with a knurled grip band, a rear cap, a front cap with its bore.
+    const z0 = zm - 0.012, z1 = z0 - 0.165, r = 0.0172;
+    g.tube([0, y, z0], [0, y, z0 - 0.01], 0.008, r, GUN, 16);
+    tubeZ(g, 0, y, z0 - 0.01, z1 + 0.012, r, GUN, 16);
+    matte(g);
+    for (let k = 0; k < 14; k++) tubeZ(g, 0, y, z0 - 0.03 - k * 0.0034, z0 - 0.0315 - k * 0.0034, r + 0.0009, BLACK, 16);
+    for (let k = 0; k < 6; k++) { const a = (k / 6) * Math.PI * 2; bar(g, [Math.sin(a) * (r + 0.0006), y + Math.cos(a) * (r + 0.0006), z0 - 0.1], [Math.sin(a) * (r + 0.0006), y + Math.cos(a) * (r + 0.0006), z1 + 0.02], 0.0024, 0.0012, POLY2); }
+    tubeZ(g, 0, y, z0 - 0.112, z0 - 0.118, r + 0.0012, ORANGE, 16);
+    metal(g);
+    g.tube([0, y, z1 + 0.012], [0, y, z1], r, r * 0.86, GUN, 16);
+    matte(g);
+    tubeZ(g, 0, y, z1 + 0.0005, z1 - 0.0008, 0.0055, HOLE, 10);
+    // A low-mounted micro red dot on the slide, so the can doesn't block the irons.
+    g.box(0, y + 0.0215, -0.03, 0.018, 0.006, 0.026, BLACK);
+    g.box(0, y + 0.031, -0.03, 0.02, 0.014, 0.024, BLACK);
+    metal(g); g.box(0, y + 0.032, -0.0425, 0.016, 0.01, 0.0008, LENS);
+    glow(g); g.box(0, y + 0.033, -0.035, 0.0022, 0.0022, 0.0008, DOT);
+    matte(g);
+    return [0, y, z1 - 0.001];
+  },
+
+  // Kill Switch: a stubby emitter barrel wound with coils, a capacitor bank on top, an emitter dish at
+  // the front that glows when charged, a battery pack in the stock.
+  killswitch(g) {
+    const y = 0.1;
+    // Receiver.
+    metal(g);
+    cham(g, 0, y, -0.06, 0.07, 0.08, 0.26, 0.012, GUN);
+    matte(g);
+    for (let k = 0; k < 6; k++) for (const s of [-1, 1]) g.box(s * 0.0352, y - 0.01, -0.13 + k * 0.024, 0.0016, 0.03, 0.012, HOLE);
+    g.box(0.0356, y + 0.012, -0.06, 0.0012, 0.006, 0.2, ORANGE);
+    // Barrel: a dark core wound with copper coils, held in three collars.
+    metal(g);
+    tubeZ(g, 0, y + 0.004, -0.19, -0.48, 0.024, BLUED, 14);
+    const COPPER = C(0xb4693a);
+    for (let k = 0; k < 18; k++) tubeZ(g, 0, y + 0.004, -0.215 - k * 0.0135, -0.2235 - k * 0.0135, 0.031, COPPER, 14);
+    for (const z of [-0.2, -0.34, -0.47]) tubeZ(g, 0, y + 0.004, z + 0.008, z - 0.008, 0.036, GUN, 14);
+    matte(g);
+    for (const z of [-0.2, -0.34, -0.47]) for (const s of [-1, 1]) g.box(s * 0.036, y + 0.004, z, 0.004, 0.012, 0.01, BLACK);
+    // Emitter dish: a bell flaring out to a ring of glowing segments round the bore.
+    metal(g);
+    g.tube([0, y + 0.004, -0.48], [0, y + 0.004, -0.53], 0.028, 0.058, GUN, 18);
+    tubeZ(g, 0, y + 0.004, -0.53, -0.538, 0.06, GUN, 18);
+    matte(g);
+    tubeZ(g, 0, y + 0.004, -0.5375, -0.539, 0.05, HOLE, 18);
+    glow(g);
+    const CYAN = C(0x3fd0c9);
+    for (let k = 0; k < 10; k++) { const a0 = (k / 10) * Math.PI * 2 + 0.08, a1 = ((k + 1) / 10) * Math.PI * 2 - 0.08; bar(g, [Math.sin(a0) * 0.044, y + 0.004 + Math.cos(a0) * 0.044, -0.5392], [Math.sin(a1) * 0.044, y + 0.004 + Math.cos(a1) * 0.044, -0.5392], 0.006, 0.002, CYAN); }
+    tubeZ(g, 0, y + 0.004, -0.539, -0.5395, 0.012, CYAN, 12);
+    // Capacitor bank on top: three cans in a cage, charge lamps along the side.
+    matte(g);
+    g.box(0, y + 0.045, -0.12, 0.05, 0.01, 0.17, BLACK);
+    metal(g);
+    for (let k = 0; k < 3; k++) tubeZ(g, 0, y + 0.068, -0.05 - k * 0.055, -0.095 - k * 0.055, 0.019, k === 1 ? POLY2 : STEEL, 12);
+    matte(g);
+    for (const s of [-1, 1]) rod(g, [[s * 0.024, y + 0.05, -0.035], [s * 0.024, y + 0.095, -0.05], [s * 0.024, y + 0.095, -0.2], [s * 0.024, y + 0.05, -0.215]], 0.0025, BLACK, 4);
+    rod(g, [[0, y + 0.088, -0.205], [0, y + 0.07, -0.24], [0, y + 0.03, -0.26]], 0.004, RED, 5);
+    glow(g); for (let k = 0; k < 4; k++) g.box(-0.0362, y + 0.02, -0.02 - k * 0.012, 0.0012, 0.005, 0.007, k < 3 ? CYAN : DOT);
+    matte(g);
+    // Rear sight and a ghost-ring front.
+    g.box(0, y + 0.1, -0.02, 0.012, 0.012, 0.012, BLACK);
+    g.tube([0, y + 0.1, -0.235], [0, y + 0.1, -0.24], 0.008, 0.008, BLACK, 10);
+    // Grip, guard, trigger, a vertical foregrip.
+    const ga = [0, y - 0.04, 0.0], gb = [0, y - 0.15, 0.025];
+    bar(g, ga, gb, 0.032, 0.046, POLY);
+    for (let i = 0; i < 8; i++) { const p = mix(ga, gb, 0.2 + i * 0.09); for (const s of [-1, 1]) g.box(s * 0.0162, p[1], p[2], 0.0006, 0.002, 0.034, POLY2); }
+    guard(g, -0.06, -0.008, y - 0.04, y - 0.088, GUN);
+    trigger(g, -0.03, y - 0.045);
+    bar(g, [0, y - 0.04, -0.27], [0, y - 0.15, -0.26], 0.03, 0.034, POLY);
+    for (let k = 0; k < 4; k++) bar(g, [0, y - 0.06 - k * 0.022, -0.288], [0, y - 0.07 - k * 0.022, -0.288], 0.031, 0.004, POLY2);
+    // Stock with the battery pack: a box with a gauge and a heavy cable to the receiver.
+    metal(g);
+    for (const s of [-1, 1]) rod(g, [[s * 0.022, y - 0.01, 0.07], [s * 0.022, y - 0.02, 0.27]], 0.006, GUN);
+    matte(g);
+    g.box(0, y - 0.03, 0.17, 0.06, 0.07, 0.11, OLIVE);
+    for (let k = 0; k < 3; k++) g.box(0, y + 0.006, 0.13 + k * 0.03, 0.062, 0.004, 0.006, OD2);
+    glow(g); g.box(0.031, y - 0.02, 0.17, 0.0012, 0.02, 0.04, CYAN); matte(g);
+    g.box(0, y - 0.04, 0.285, 0.06, 0.12, 0.02, RUBBER);
+    rod(g, [[0.03, y - 0.04, 0.12], [0.045, y - 0.07, 0.06], [0.04, y - 0.05, -0.02], [0.036, y - 0.02, -0.06]], 0.005, BLACK, 5);
+    return [0, y + 0.004, -0.54];
+  },
+
+  // Sticky Note: a block of charge wrapped in orange tape on an adhesive pad, a detonator clipped to it
+  // with a stub antenna and a blinking arm lamp.
+  stickynote(g) {
+    matte(g);
+    g.box(0, 0.025, 0, 0.07, 0.04, 0.11, SAND);
+    for (const z of [-0.035, 0.035]) g.box(0, 0.025, z, 0.0715, 0.0415, 0.014, ORANGE);
+    g.box(0, 0.0035, 0, 0.074, 0.004, 0.114, C(0xffc667));
+    // Detonator.
+    g.box(0, 0.056, 0.008, 0.044, 0.022, 0.05, BLACK);
+    for (const s of [-1, 1]) g.box(s * 0.0225, 0.056, 0.008, 0.002, 0.012, 0.03, POLY2);
+    g.box(0, 0.0675, 0.02, 0.016, 0.002, 0.012, POLY2);
+    metal(g);
+    g.tube([0.014, 0.067, -0.01], [0.014, 0.12, -0.016], 0.0018, 0.0012, STEEL, 5);
+    g.tube([0.014, 0.12, -0.016], [0.014, 0.124, -0.0165], 0.0028, 0.0028, BLACK, 6);
+    for (const x of [-0.012, 0.0]) rod(g, [[x, 0.05, -0.017], [x, 0.045, -0.03], [x, 0.04, -0.04]], 0.0016, x ? RED : C(0x2f757c), 4);
+    glow(g); g.box(-0.012, 0.0685, -0.004, 0.006, 0.002, 0.006, DOT);
+    matte(g);
+    return null;
+  },
 };
 function muzzleHole2(g, x, y, z, r) { g.e.cdata = [0, 0]; tubeZ(g, x, y, z + 0.001, z - 0.0005, r, HOLE, 8); g.e.cdata = [1, 0]; }
 
@@ -800,7 +916,7 @@ export function weaponGeometry(id) {
   const w = WEAPON[id];
   const g = new Geo({ cdata: 2 });
   g.e.cdata = [0, 0];
-  const make = BUILD[w.cls === "pistol" ? "pistol" : w.cls];
+  const make = BUILD[id] || BUILD[w.cls === "pistol" ? "pistol" : w.cls];
   const m = make ? make(g, w) : null;
   if (m) muzzles.set(id, m);
   const geo = g.count ? g.build() : null;

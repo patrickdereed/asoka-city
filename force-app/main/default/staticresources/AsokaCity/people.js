@@ -165,6 +165,8 @@ export class Person {
     const idle = await loadClip(`${g}_idle_neutral`) || await loadClip("m_idle_neutral");
     // The legs' neutral pose (straight, feet forward), before the idle clip spreads them.
     this.legRest = LEGS.map((n) => this.bones[n]).filter(Boolean).map((b) => [b, b.quaternion.clone()]);
+    this.inner.updateMatrixWorld(true);
+    this.legLen = this.bones.Bip01_L_Thigh.getWorldPosition(new THREE.Vector3()).distanceTo(this.bones.Bip01_L_Foot.getWorldPosition(new THREE.Vector3())) || 0.9;
     if (idle) { this.idle = this.mixer.clipAction(idle); this.idle.play(); this.idle.time = Math.random() * idle.duration; }
     this.mixer.update(0);
     this.inner.updateMatrixWorld(true);
@@ -226,29 +228,60 @@ export class Person {
       return;
     }
     this.holder.updateMatrixWorld(true);
-    const B = this.bones, w = this.walkW, r = this.runW, ph = this.phase, L = this.L;
+    const B = this.bones, w = this.walkW, r = this.runW, L = this.L;
     const hq = this.holder.quaternion;
-    const thighA = lerp(0.4, 0.78, r) * w, calfA = lerp(0.95, 1.45, r) * w;
-    const armA = lerp(0.32, 0.62, r) * w, foreA = lerp(0.22, 1.35, r) * w;
-    const s = Math.sin(ph), c = Math.cos(ph);
     // The idle clip stands with the feet apart and turned out; walking from that leaves every leg
     // canted. Ease the legs back to neutral as the walk comes in, then swing them.
     for (const [b, q] of this.legRest || []) b.quaternion.slerp(q, Math.min(1, w));
-    turn(B.Bip01_L_Thigh, L, this.sThigh * thighA * s, hq);
-    turn(B.Bip01_R_Thigh, L, -this.sThigh * thighA * s, hq);
-    turn(B.Bip01_L_Calf, L, this.sCalf * (calfA * Math.pow(Math.max(0, c), 1.4) + 0.06 * w), hq);
-    turn(B.Bip01_R_Calf, L, this.sCalf * (calfA * Math.pow(Math.max(0, -c), 1.4) + 0.06 * w), hq);
-    turn(B.Bip01_L_Foot, L, -this.sCalf * 0.22 * w * Math.max(0, -s), hq);
-    turn(B.Bip01_R_Foot, L, -this.sCalf * 0.22 * w * Math.max(0, s), hq);
-    turn(B.Bip01_L_UpperArm, L, -this.sArmL * armA * s, hq);
-    turn(B.Bip01_R_UpperArm, L, this.sArmR * armA * s, hq);
-    turn(B.Bip01_L_Forearm, L, this.sFore * (foreA * 0.6 + foreA * 0.4 * Math.max(0, -s)), hq);
-    turn(B.Bip01_R_Forearm, L, this.sForeR * (foreA * 0.6 + foreA * 0.4 * Math.max(0, s)), hq);
+    // A gait, not a pendulum: each leg spends most of the cycle planted (stance), sweeping back at
+    // exactly the body's speed so the foot stays put on the ground, then swings forward quickly with
+    // the knee bent and the toes lifted clear. The sweep that keeps the foot still is set by the stride
+    // and leg length (less the heel-to-toe roll), and the hips dip as the planted leg leans.
+    const beta = lerp(0.6, 0.38, r), Ll = this.legLen || 0.9;
+    const th = Math.asin(clamp((beta * stride - 0.2) / (2 * Ll), 0, 0.6)) * w;
+    const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+    const leg = (p) => {
+      let a, k, push = 0, heel = 0;
+      if (p < beta) {
+        const u = p / beta;
+        a = th * (1 - 2 * u);
+        k = (lerp(0.22, 0.45, r) * Math.sin(Math.PI * Math.min(1, u * 1.6)) + 0.04) * w;
+        heel = 0.18 * (1 - smooth(0, 0.18, u)) * w;          // lands on the heel, rolls flat
+        push = 0.5 * smooth(0.68, 1, u) * w;                  // and pushes off the toes
+      } else {
+        const q = (p - beta) / (1 - beta);
+        a = -th + 2 * th * (0.5 - 0.5 * Math.cos(Math.PI * q));
+        k = lerp(0.82, 1.5, r) * Math.pow(Math.sin(Math.PI * Math.min(1, q * 1.25)), 1.2) * w;
+        push = 0.5 * (1 - smooth(0, 0.25, q)) * w;
+        heel = 0.12 * smooth(0.45, 1, q) * w;                 // toes up, ready for the heel strike
+      }
+      return { a, k, push, heel, stance: p < beta };
+    };
+    const TAU = Math.PI * 2, pL = ((this.phase / TAU) % 1 + 1) % 1, pR = (pL + 0.5) % 1;
+    const legs = [["L", leg(pL)], ["R", leg(pR)]];
+    let support = Infinity;
+    for (const [side, g] of legs) {
+      turn(B[`Bip01_${side}_Thigh`], L, this.sThigh * g.a, hq);
+      turn(B[`Bip01_${side}_Calf`], L, this.sCalf * g.k, hq);
+      // Keep the sole level whatever the hip and knee are doing, then roll it heel-to-toe.
+      turn(B[`Bip01_${side}_Foot`], L, -(this.sThigh * g.a + this.sCalf * g.k) + this.sCalf * (g.push - g.heel), hq);
+      if (g.stance) support = Math.min(support, Math.abs(g.a));
+    }
+    // Arms swing against the legs, elbows soft and bending more on the forward swing.
+    const armA = lerp(0.36, 0.62, r) * w, foreA = lerp(0.3, 1.35, r) * w;
+    const cL = Math.cos(TAU * pL);
+    turn(B.Bip01_L_UpperArm, L, -this.sArmL * armA * cL, hq);
+    turn(B.Bip01_R_UpperArm, L, this.sArmR * armA * cL, hq);
+    turn(B.Bip01_L_Forearm, L, this.sFore * (foreA * 0.55 + foreA * 0.45 * Math.max(0, -cL)), hq);
+    turn(B.Bip01_R_Forearm, L, this.sForeR * (foreA * 0.55 + foreA * 0.45 * Math.max(0, cL)), hq);
     if (B.Bip01_Spine) {
-      turn(B.Bip01_Spine, Y, 0.07 * w * s, hq);
+      turn(B.Bip01_Spine, Y, 0.08 * w * cL, hq);
       turn(B.Bip01_Spine, L, -this.sThigh * 0.16 * r * w, hq);
     }
-    this.inner.position.y = -0.03 * w * (1 - Math.abs(Math.cos(ph))) * (1 + r);
+    // The hips ride over the planted leg: lowest when it leans, highest as it passes under (in a run,
+    // up again in the flight between steps).
+    const drop = support < Infinity ? Ll * (1 - Math.cos(support)) : 0;
+    this.inner.position.y = -drop - 0.035 * r * w * (support < Infinity ? 1 : 0);
     if (this.dive > 0) {
       // Jumping out of the way: a quick sideways hop with the arms up.
       const k = Math.sin(Math.min(1, this.dive) * Math.PI);
@@ -336,9 +369,10 @@ export class Crowd {
   }
 
   // Shot, hit or caught in a blast: knocked down at zero health, otherwise running.
-  hurt(p, dmg, fx, fz) {
+  hurt(p, dmg, fx, fz, byPlayer = true) {
     if (p.downT) return false;
     p.hp -= dmg;
+    if (p.actor && this.onHurt) this.onHurt(p, dmg, fx, fz, byPlayer);
     if (p.hp <= 0) { this.knock(p, fx, fz, true); return true; }
     this.alarm(p.x, p.z, 6, fx, fz);
     return false;
@@ -370,7 +404,7 @@ export class Crowd {
   // Everyone near a threat runs away from it along their pavement.
   alarm(x, z, radius, fx, fz) {
     for (const p of this.people) {
-      if (p.downT || Math.hypot(p.x - x, p.z - z) > radius) continue;
+      if (p.actor || p.downT || Math.hypot(p.x - x, p.z - z) > radius) continue;
       p.panic = 7 + this.r() * 6;
       p.standing = false;
       this.w.edgePoint(p.e, p.s, 0, tmp);
@@ -382,17 +416,20 @@ export class Crowd {
   }
 
   update(dt, cam, car, walker) {
-    if (!this.spawning && this.people.length < this.max) {
+    if (!this.spawning && this.people.filter((p) => !p.actor).length < this.max) {
       this.spawning = true;
       this.spawnOne(cam).finally(() => { this.spawning = false; });
     }
     this.people = this.people.filter((p) => {
+      // Mission people (actors.js) come and go with their mission, not with the camera.
+      if (p.actor) return !p.gone;
       if (Math.hypot(p.x - cam.x, p.z - cam.z) < 150 && !(p.downT > 40)) return true;
       this.scene.remove(p.person.holder);
       return false;
     });
     const carSpeed = car ? Math.hypot(car.vx, car.vz) : 0;
     for (const p of this.people) {
+      if (p.hidden) continue;   // an actor riding in a car
       if (p.downT) {
         // Knocked down: topple over and lie there; after a minor knock, get back up and run.
         p.downT += dt;
@@ -404,6 +441,7 @@ export class Crowd {
             p.downT = 0; p.person.down = 0; p.yaw = p.fallYaw + Math.PI;
             p.person.holder.rotation.set(0, p.yaw, 0);
             p.standing = false;
+            if (p.actor) continue;
             this.rejoin(p);
             this.alarm(p.x, p.z, 0.5, p.from[0], p.from[1]);
             continue;
@@ -417,7 +455,7 @@ export class Crowd {
       }
       // Cars coming at you: get out of the way, if you've seen it coming (it's somewhere ahead of
       // you, not behind). Anyone looking the other way gets hit.
-      if (car && carSpeed > 3 && !p.flee) {
+      if (car && carSpeed > 3 && !p.flee && !p.actor) {
         const dx = p.x - car.x, dz = p.z - car.z, d = Math.hypot(dx, dz);
         const sees = (-Math.sin(p.yaw) * -dx + -Math.cos(p.yaw) * -dz) / Math.max(d, 0.01) > -0.25;
         if (sees && d < 4 + carSpeed * 0.5) {
@@ -439,6 +477,9 @@ export class Crowd {
         p.person.dive = p.flee > 0.8 ? 1 - (p.flee - 0.8) / 0.6 : 0;
         speed = 3.5 * k; run = 1;
         if (p.flee === 0) { p.person.dive = 0; this.rejoin(p); }
+      } else if (p.actor) {
+        // actors.js moved them already this frame.
+        speed = p.aSpeed || 0; run = p.aRun || 0;
       } else if (!p.standing) {
         if (p.panic > 0) { p.panic -= dt; speed = 4.3; run = 1; } else speed = p.speed;
         p.s += speed * dt * p.dir;

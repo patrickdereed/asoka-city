@@ -103,7 +103,9 @@ export class Vehicle {
       if (inp.throttle > 0) {
         Fx = Math.min((this.power * inp.throttle) / Math.max(Math.abs(u), 2.5), muR * Fzr * 1.05);
         // Traction control: while steering hard, keep some rear grip free for cornering.
-        if (!inp.handbrake) Fx = Math.min(Fx, muR * Fzr * (1.05 - 0.6 * Math.min(1, Math.abs(d) / 0.25)));
+        // Pulling away there's no corner to save grip for, so it only comes in with speed.
+        const tc = clamp((Math.abs(u) - 4) / 10, 0, 1);
+        if (!inp.handbrake) Fx = Math.min(Fx, muR * Fzr * (1.05 - 0.6 * tc * Math.min(1, Math.abs(d) / 0.25)));
       }
       if (inp.brake > 0) {
         if (u > 0.6) Fx -= inp.brake * 12500;
@@ -119,7 +121,10 @@ export class Vehicle {
       const ar = Math.atan2(vl - this.b * this.r, den);
       const maxF = muF * Fzf;
       const maxR = Math.sqrt(Math.max(0, (muR * Fzr) ** 2 - Math.min(Fx * Fx, (muR * Fzr) ** 2 * 0.9)));
-      const Fyf = clamp(-this.C * af, -maxF, maxF);
+      // At walking pace the slip-angle model would have full lock scrub like a brake; the wheels just roll
+      // where they point, so the front force there is only what the turn itself needs.
+      const low = clamp(Math.abs(u) / 6, 0.12, 1);
+      const Fyf = clamp(-this.C * af, -maxF * low, maxF * low);
       const Fyr = clamp(-this.C * ar, -maxR, maxR);
       this.slip = Math.max(Math.abs(Fyr) >= maxR * 0.98 ? Math.abs(vl) : 0, inp.handbrake ? Math.abs(u) * 0.3 : 0);
 

@@ -22,6 +22,8 @@ export class Arsenal {
     this.aimDir = new THREE.Vector3(0, 0, -1);
     this.gunDir = new THREE.Vector3(0, 0, -1);
     this.holstered = false;
+    // Who is holding it: "player", or a mission actor (whose shots can hit the player, scaled by shotOpts).
+    this.shooter = "player"; this.shotOpts = {};
     this.setMesh();
   }
 
@@ -70,6 +72,7 @@ export class Arsenal {
 
   reload() {
     const w = this.w, st = this.state;
+    if (w.remote && this.combat.planted > 0) { this.combat.detonate(); return; }
     if (!w.mag || !st || this.reloadT > 0 || st.mag >= w.mag || st.ammo <= 0 || w.throw) return;
     this.reloadT = w.reload;
     if (this.audio) this.audio.reload();
@@ -100,6 +103,13 @@ export class Arsenal {
       setTimeout(() => this.combat.swing(w, ctx.person.holder.position.x, ctx.person.holder.position.y, ctx.person.holder.position.z, ctx.aimDir.x, ctx.aimDir.z), 120);
       return { kind: "swing" };
     }
+    // A remote charge: with one planted, the trigger sets it off instead of throwing another.
+    if (w.remote && this.combat.planted > 0) {
+      if (!ctx.pressed) return null;
+      this.combat.detonate(); this.cool = 0.4;
+      if (this.audio) this.audio.click();
+      return { kind: "detonate" };
+    }
     if (st.mag <= 0) {
       if (st.ammo > 0) this.reload(); else if (ctx.pressed && this.audio) this.audio.click();
       return null;
@@ -112,7 +122,7 @@ export class Arsenal {
       setTimeout(() => {
         const from = ctx.person.hand("R");
         const vel = camDir.clone().setY(0).normalize().multiplyScalar(14).add(new THREE.Vector3(0, 6 + camDir.y * 10, 0));
-        this.combat.launch("grenade", from, vel);
+        this.combat.launch(w.proj === "sticky" ? "sticky" : "grenade", from, vel, this.shooter === "player" ? "player" : "npc");
         if (st.mag === 0 && st.ammo > 0) { st.mag = 1; st.ammo--; }
       }, 300);
       return { kind: "throw" };
@@ -121,10 +131,11 @@ export class Arsenal {
     const from = this.muzzle();
     if (w.proj) {
       const d = new THREE.Vector3().subVectors(ctx.aimPoint, from).normalize();
-      this.combat.launch(w.proj === "rocket" ? "rocket" : "shell", from, d.multiplyScalar(w.proj === "rocket" ? 55 : 30).add(new THREE.Vector3(0, w.proj === "shell" ? 3 : 0, 0)));
+      const kind = w.proj === "rocket" ? "rocket" : w.proj === "emp" ? "emp" : "shell";
+      this.combat.launch(kind, from, d.multiplyScalar(kind === "rocket" ? 55 : 30).add(new THREE.Vector3(0, kind === "rocket" ? 0 : 3, 0)), this.shooter === "player" ? "player" : "npc");
       this.combat.flash(from, 1.6);
     }
-    const hits = w.proj ? 0 : this.combat.shot(w, from, ctx.aimPoint);
+    const hits = w.proj ? 0 : this.combat.shot(w, from, ctx.aimPoint, this.shooter, this.shotOpts);
     this.act = 1; this.actT = Math.min(0.25, 0.6 / w.rate);
     if (st.mag === 0 && st.ammo > 0) setTimeout(() => this.reload(), 250);
     return { kind: "shot", hits, kick: { pistol: 0.012, revolver: 0.03, smg: 0.006, shotgun: 0.045, rifle: 0.01, sniper: 0.05, lmg: 0.008, minigun: 0.004, launcher: 0.03, rocket: 0.05 }[w.cls] || 0.01 };

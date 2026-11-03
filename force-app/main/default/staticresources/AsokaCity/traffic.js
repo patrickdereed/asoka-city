@@ -81,13 +81,15 @@ export class Traffic {
   update(dt, player, px, pz, near, far) {
     const r = this.r;
     this.spawnT -= dt;
-    if (this.cars.length < this.max && this.spawnT <= 0) {
+    if (this.cars.filter((c) => !c.ai).length < this.max && this.spawnT <= 0) {
       this.spawn(px, pz, near, far);
       this.spawnT = 0.05;
     }
-    this.cars = this.cars.filter((c) => Math.hypot(c.x - px, c.z - pz) < far + 80);
+    // Mission cars (actors.js) drive themselves and stay until their mission lets them go.
+    this.cars = this.cars.filter((c) => (c.ai ? !c.gone : Math.hypot(c.x - px, c.z - pz) < far + 80));
 
     for (const c of this.cars) {
+      if (c.ai) continue;
       // A car the player left at the kerb waits there until something hits it.
       if (c.mode === "parked") continue;
       if (c.mode === "wreck") {
@@ -100,6 +102,8 @@ export class Traffic {
         c.brake = true;
         continue;
       }
+      // Stalled by a Kill Switch pulse.
+      if (c.emp > 0) { c.emp -= dt; c.v = 0; c.brake = true; continue; }
       // Look ahead for anything in the way.
       const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw);
       let gap = Infinity;
@@ -185,6 +189,13 @@ export class Traffic {
       const pushed = { nx: hit.nx, nz: hit.nz, depth: hit.depth * (1 - share) };
       const J = p.resolve(pushed, 0.25, "car", c);
       c.x -= hit.nx * hit.depth * share; c.z -= hit.nz * hit.depth * share;
+      // A mission car takes the knock and the damage, and keeps going if it can.
+      if (c.ai) {
+        if (J) { c.kvx = (c.kvx || 0) - (J * hit.nx) / c.m; c.kvz = (c.kvz || 0) - (J * hit.nz) / c.m; if (this.onRam) this.onRam(c, J / c.m); }
+        // After a hit, a chaser backs off before it comes again.
+        if (c.ai === "chase") c.backT = Math.max(c.backT || 0, 1.1);
+        continue;
+      }
       if (c.mode !== "wreck") { c.mode = "wreck"; c.v = 0; }
       if (J) {
         c.vx -= (J * hit.nx) / c.m; c.vz -= (J * hit.nz) / c.m;

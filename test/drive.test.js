@@ -66,6 +66,12 @@ ok(Math.abs(car.fwdSpeed) < 0.6, `parked car stays put (${car.fwdSpeed.toFixed(2
     }
   }
   ok(worst < 20, `no spin-outs when steering (worst slide ${worst.toFixed(0)} deg)`);
+  // Pulling away with the wheel turned: the car still accelerates (full lock used to pin it at a standstill).
+  for (const steer of [0.5, 1]) {
+    const c = new Vehicle(flat, PLAYER_CAR); c.place(0, 0, 0);
+    for (let t = 0; t < 2; t += DT) c.step(DT, { throttle: 1, brake: 0, steer, handbrake: false });
+    ok(c.speed * 3.6 > 15, `accelerates from rest while steering ${steer === 1 ? "on full lock" : "half lock"} (${(c.speed * 3.6).toFixed(0)} km/h after 2 s)`);
+  }
 }
 
 // Suspension: driving up a kerb soaks it up (no launch); a ramp's lip still throws the car.

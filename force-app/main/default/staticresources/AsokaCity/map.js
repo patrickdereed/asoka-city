@@ -6,6 +6,7 @@
 
 import { clamp, lerp, smoothstep, hash2, fbm, rng } from "./util.js";
 import { Parts, LANDMARKS, fireEscape, escapeFootprint } from "./structures.js";
+import { SITES, SITE_PLAN, SITE_SIGNS, Frame } from "./sites.js";
 
 export const SIZE = 8192, HALF = 4096, CHUNK = 256, NCH = 32, GRID = 128, NG = 64;
 export const HRES = 8, HN = SIZE / HRES + 1;
@@ -107,7 +108,7 @@ export const NEON = [0xff6a2e, 0xff6a2e, 0x3fd0c9, 0xffc667, 0xcc75a0, 0xfffdf9]
 const URBAN = new Set(["console", "uptown", "cadence", "sandbox", "scratch", "preview", "gardens"]);
 const CAR_COLS = [0xfff7ee, 0xcdbba2, 0x2f757c, 0x507fa7, 0xb8544f, 0xd7a03d, 0xa4517b, 0x8a8073, 0xfffdf9, 0x283f43, 0x5d8f5e, 0xe9e4da];
 export const SIGNS = ["ASOKA", "GO-LIVE", "INSTINCTS", "THE CONSOLE", "SANDBOX ISLES", "MERIDIAN HEALTH", "PIPELINE FREIGHT", "COMMIT ROW", "CADENCE", "GUIDELINE HILLS", "SYSENG", "READY TO PROMOTE",
-  "BREAKPOINT ARMS", "DEPLOY MART", "SANDBOX THREADS", "MERIDIAN CLINIC"];
+  "BREAKPOINT ARMS", "DEPLOY MART", "SANDBOX THREADS", "MERIDIAN CLINIC", ...SITE_SIGNS];
 
 // Building styles understood by the building shader.
 export const ST = { GLASS: 0, DECO: 1, OFFICE: 2, HOUSE: 3, WARE: 4, BOX: 5, HOSP: 6, LOGO: 7, VILLA: 8, CONC: 9, NEON: 10, STEEL: 11 };
@@ -181,6 +182,7 @@ export class World {
     this.planLandmarks();
     this.planVenues();
     this.planPickups();
+    this.planSites();
   }
 
   // Height of the terrain mesh, interpolated exactly the way its triangles are.
@@ -1073,24 +1075,126 @@ export class World {
       }
       this.clears.push(zone);
       this.landmarks.push({ id: key, district: key, ...info, zone });
-      const at = (x, z) => {
-        const cx = clamp(Math.floor((x + HALF) / CHUNK), 0, NCH - 1), cz = clamp(Math.floor((z + HALF) / CHUNK), 0, NCH - 1), k = cx + cz * NCH;
-        if (!this.lmChunk.has(k)) this.lmChunk.set(k, { parts: [], walk: [], boxes: [], circles: [], buildings: [], glows: [], signs: [] });
-        return this.lmChunk.get(k);
-      };
-      const span = (r, list) => {
-        const c0 = clamp(Math.floor((r.x0 + HALF) / CHUNK), 0, NCH - 1), c1 = clamp(Math.floor((r.x1 + HALF) / CHUNK), 0, NCH - 1);
-        const k0 = clamp(Math.floor((r.z0 + HALF) / CHUNK), 0, NCH - 1), k1 = clamp(Math.floor((r.z1 + HALF) / CHUNK), 0, NCH - 1);
-        for (let k = k0; k <= k1; k++) for (let c = c0; c <= c1; c++) at(-HALF + c * CHUNK + 1, -HALF + k * CHUNK + 1)[list].push(r);
-      };
-      for (const p of P.parts) { const q = p[0] === 3 ? p[1][0] : [p[1], 0, p[3]]; at(q[0], q[2]).parts.push(p); }
-      for (const w of P.walk) span(w, "walk");
-      for (const b of P.boxes) span(b, "boxes");
-      for (const c of P.circles) at(c.x, c.z).circles.push(c);
-      for (const b of P.buildings) at((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2).buildings.push(b);
-      for (const g of P.glows) at(g.x, g.z).glows.push(g);
-      for (const g of P.signs) at(g.x, g.z).signs.push(g);
+      this.registerParts(P);
     }
+  }
+
+  // Hand a structure's parts, surfaces and colliders to the chunks they fall in.
+  registerParts(P) {
+    const at = (x, z) => {
+      const cx = clamp(Math.floor((x + HALF) / CHUNK), 0, NCH - 1), cz = clamp(Math.floor((z + HALF) / CHUNK), 0, NCH - 1), k = cx + cz * NCH;
+      if (!this.lmChunk.has(k)) this.lmChunk.set(k, { parts: [], walk: [], boxes: [], circles: [], buildings: [], glows: [], signs: [] });
+      return this.lmChunk.get(k);
+    };
+    const span = (r, list) => {
+      const c0 = clamp(Math.floor((r.x0 + HALF) / CHUNK), 0, NCH - 1), c1 = clamp(Math.floor((r.x1 + HALF) / CHUNK), 0, NCH - 1);
+      const k0 = clamp(Math.floor((r.z0 + HALF) / CHUNK), 0, NCH - 1), k1 = clamp(Math.floor((r.z1 + HALF) / CHUNK), 0, NCH - 1);
+      for (let k = k0; k <= k1; k++) for (let c = c0; c <= c1; c++) at(-HALF + c * CHUNK + 1, -HALF + k * CHUNK + 1)[list].push(r);
+    };
+    // Hexahedra and quads (stair treads) carry a corner list; the rest a position.
+    for (const p of P.parts) { const q = p[0] === 3 || p[0] === 4 ? p[1][0] : [p[1], 0, p[3]]; at(q[0], q[2]).parts.push(p); }
+    for (const w of P.walk) span(w, "walk");
+    for (const b of P.boxes) span(b, "boxes");
+    for (const c of P.circles) at(c.x, c.z).circles.push(c);
+    for (const b of P.buildings) at((b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2).buildings.push(b);
+    for (const g of P.glows) at(g.x, g.z).glows.push(g);
+    for (const g of P.signs) at(g.x, g.z).signs.push(g);
+  }
+
+  // --------------------------------------------------------------------------- mission sites
+
+  // The story's buildings. Planned last, so the venues, envelopes and landmarks (and the saved games
+  // that refer to them) are unchanged; every lot avoids all of those.
+  planSites() {
+    this.sites = {};
+    const busy = (z) => this.clears.some((c) => z.x1 > c.x0 - 4 && z.x0 < c.x1 + 4 && z.z1 > c.z0 - 4 && z.z0 < c.z1 + 4)
+      || this.venues.some((v) => z.x1 > v.x0 - 6 && z.x0 < v.x1 + 6 && z.z1 > v.z0 - 6 && z.z0 < v.z1 + 6)
+      || this.pickups.some((p) => p.x > z.x0 - 3 && p.x < z.x1 + 3 && p.z > z.z0 - 3 && p.z < z.z1 + 3)
+      || (z.x1 > PLAZA.x0 - 60 && z.x0 < PLAZA.x1 + 60 && z.z1 > PLAZA.z0 - 60 && z.z0 < PLAZA.z1 + 60);
+    for (const spec of SITE_PLAN) {
+      const pick = spec.roadside ? this.roadsideLot(spec, busy) : this.siteLot(spec, busy);
+      if (!pick) continue;
+      const P = new Parts();
+      const info = SITES[spec.id](P, pick, this);
+      this.clears.push(pick.zone);
+      this.registerParts(P);
+      const z = pick.zone;
+      this.sites[spec.id] = { id: spec.id, name: info.name, district: spec.district, x: (z.x0 + z.x1) / 2, z: (z.z0 + z.z1) / 2, zone: z, anchors: info.anchors };
+    }
+  }
+
+  // A block lot in the district (the whole lot, or a W x D piece of it against one of its roads).
+  siteLot(spec, busy) {
+    let best = null, bd = Infinity;
+    for (let j = 1; j < NG - 1; j++) for (let i = 1; i < NG - 1; i++) {
+      const cxm = -HALF + i * GRID + GRID / 2, czm = -HALF + j * GRID + GRID / 2;
+      if (districtAt(cxm, czm) !== spec.district || this.venueAt.has(i * 100 + j)) continue;
+      const sd = shoreDist(cxm, czm);
+      if (sd < 30 || (spec.coastal && sd > 100)) continue;
+      const L = this.lotOf(i, j);
+      const roads = [0, 1, 2, 3].filter((k) => L.sides[k] && L.sides[k].main && !L.sides[k].bridge && L.sides[k].type !== 2);
+      if (!roads.length) continue;
+      if (spec.whole) {
+        if (L.x1 - L.x0 < 92 || L.z1 - L.z0 < 92) continue;
+        const land = this.landOK(L.x0, L.z0, L.x1, L.z1, 4);
+        if (!land || land.hi - land.lo > 1.6) continue;
+        const zone = { x0: L.x0 - 1, z0: L.z0 - 1, x1: L.x1 + 1, z1: L.z1 + 1 };
+        if (busy(zone)) continue;
+        // A coastal yard faces a road with the water just behind its back wall (the quay); others face
+        // the road nearest the target.
+        const mids = { 0: [L.x0, czm], 1: [L.x1, czm], 2: [cxm, L.z0], 3: [cxm, L.z1] }, opp = { 0: 1, 1: 0, 2: 3, 3: 2 };
+        const fronts = spec.coastal ? roads.filter((k) => { const b = shoreDist(...mids[opp[k]]); return b > 0 && b < 25; }) : roads;
+        if (!fronts.length) continue;
+        const side = fronts.slice().sort((a, b) => Math.hypot(mids[a][0] - spec.at[0], mids[a][1] - spec.at[1]) - Math.hypot(mids[b][0] - spec.at[0], mids[b][1] - spec.at[1]))[0];
+        const d = Math.hypot(cxm - spec.at[0], czm - spec.at[1]);
+        if (d < bd) { bd = d; best = { F: new Frame(L, side, 999, 999), gy: land.hi + 0.1, lo: land.lo, hi: land.hi, lot: L, zone }; }
+        continue;
+      }
+      for (const side of roads) {
+        const F = new Frame(L, side, spec.W, spec.D, -0.6);
+        if (F.W < spec.W - 0.5 || F.D < spec.D - 0.5) continue;
+        const R = F.r(0, 0, F.W, F.D);
+        const land = this.landOK(R.x0, R.z0, R.x1, R.z1, 3);
+        if (!land || land.hi - land.lo > 1.2) continue;
+        const zone = { x0: R.x0 - 1, z0: R.z0 - 1, x1: R.x1 + 1, z1: R.z1 + 1 };
+        if (busy(zone)) continue;
+        const d = Math.hypot((R.x0 + R.x1) / 2 - spec.at[0], (R.z0 + R.z1) / 2 - spec.at[1]) + (L.sides[side].type === 1 ? 0 : 40);
+        if (d < bd) { bd = d; best = { F, gy: land.hi + 0.1, lo: land.lo, hi: land.hi, lot: L, zone }; }
+      }
+    }
+    return best;
+  }
+
+  // A W x D lot near a main road, as flat as can be found, facing the road (the hills have no grid
+  // blocks and their roads wind along steep ground, so this scans the district rather than the roads).
+  roadsideLot(spec, busy) {
+    const { W, D } = spec;
+    let best = null, bd = Infinity;
+    for (let x = -HALF + 80; x < HALF - 80; x += 16) for (let z = -HALF + 80; z < HALF - 80; z += 16) {
+      if (districtAt(x, z) !== spec.district || Math.hypot(x - spec.at[0], z - spec.at[1]) > 2600) continue;
+      for (const alongX of [true, false]) {
+        const lot = alongX ? { x0: x - W / 2, x1: x + W / 2, z0: z - D / 2, z1: z + D / 2 } : { x0: x - D / 2, x1: x + D / 2, z0: z - W / 2, z1: z + W / 2 };
+        const land = this.landOK(lot.x0, lot.z0, lot.x1, lot.z1, 8);
+        if (!land || land.hi - land.lo > (spec.slope || 2.2)) continue;
+        const nr = this.nearestRoad(x, z);
+        if (!nr || nr.d > D / 2 + 40) continue;
+        const rp = this.edgePoint(nr.e, nr.s, 0), dx = rp.x - x, dz = rp.z - z;
+        if (alongX ? Math.abs(dz) < Math.abs(dx) : Math.abs(dx) < Math.abs(dz)) continue;
+        const zone = { x0: lot.x0 - 1, z0: lot.z0 - 1, x1: lot.x1 + 1, z1: lot.z1 + 1 };
+        if (busy(zone)) continue;
+        let clear = true;
+        for (let u = 0; u <= 5 && clear; u++) for (let v = 0; v <= 5 && clear; v++) {
+          const px = lot.x0 + ((lot.x1 - lot.x0) * u) / 5, pz = lot.z0 + ((lot.z1 - lot.z0) * v) / 5;
+          if (this.nearRoad(px, pz, null, 3)) clear = false;
+        }
+        if (!clear) continue;
+        const side = alongX ? (dz < 0 ? 2 : 3) : (dx < 0 ? 0 : 1);
+        const drive = Math.max(0, Math.abs(alongX ? dz : dx) - D / 2 - nr.e.hw);
+        const score = (land.hi - land.lo) * 100 + Math.hypot(x - spec.at[0], z - spec.at[1]) * 0.05 + drive * 2;
+        if (score < bd) { bd = score; best = { F: new Frame(lot, side, W, D), gy: land.hi + 0.1, lo: land.lo, hi: land.hi, lot, zone, drive }; }
+      }
+    }
+    return best;
   }
 
   // Clear generated buildings, trees and signs out of the landmark areas.
@@ -1223,7 +1327,7 @@ const BLOCKS = {
         const topY = base.tiers.length ? base.tiers[base.tiers.length - 1].y1 : base.h;
         if (topY > 90) out.glows.push({ kind: "beacon", x: (a + b) / 2, z: (c + d) / 2, y: base.gy + topY + 1.5, id: -1 });
         if (topY > 60 && r() < 0.28) {
-          out.signs.push({ x: (a + b) / 2, z: c + inset - 0.3, y: base.gy + base.h - 6, w: Math.min(28, b - a - 6), h: 6, rot: 0, text: r.int(0, SIGNS.length - 1), color: r.pick(NEON) });
+          out.signs.push({ x: (a + b) / 2, z: c + inset - 0.3, y: base.gy + base.h - 6, w: Math.min(28, b - a - 6), h: 6, rot: 0, text: r.int(0, 15), color: r.pick(NEON) });   // the city's own signs; the rest name mission sites
         }
       }
     }

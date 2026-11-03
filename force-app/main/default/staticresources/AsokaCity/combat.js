@@ -36,8 +36,10 @@ export class Combat {
   constructor({ scene, world, U, mats, audio }) {
     this.scene = scene; this.w = world; this.U = U; this.audio = audio;
     this.crowd = null; this.traffic = null; this.playerCar = null; this.room = null;
-    this.onPlayerHit = null; this.onShake = null; this.onCrime = null;
+    this.onPlayerHit = null; this.onShake = null; this.onCrime = null; this.onCarHit = null;
     this.player = null;   // { x, y, z } on foot, for blast damage
+    this.foot = null;     // the player's body when on foot, for other people's shots: { x, y, z } at the feet
+    this.driving = false; // whether the player is in playerCar
 
     this.glow = glowGeometry(900);
     this.glowMesh = new THREE.Mesh(this.glow, mats.glow);
@@ -89,14 +91,17 @@ export class Combat {
   // --------------------------------------------------------------------------- hit tests
 
   // First thing along a ray from o in unit direction d. Returns { t, kind, obj, x, y, z, nx, ny, nz }.
-  ray(o, d, max, ignoreCar = null) {
+  ray(o, d, max, ignoreCar = null, shooter = null) {
     let best = { t: max, kind: null };
     const take = (t, kind, obj, n) => { if (t > 0.05 && t < best.t) best = { t, kind, obj, n }; };
     if (this.room) {
       this.rayRoom(o, d, take);
     } else {
+      // Someone else's shot can find the player on foot.
+      const me = this.foot;
+      if (shooter && me) { const t = rayCyl(o, d, me.x, me.z, 0.34, me.y, me.y + 1.8); if (t != null) take(t, "me", me, null); }
       if (this.crowd) for (const p of this.crowd.people) {
-        if (p.downT) continue;
+        if (p.downT || p.hidden || p === shooter) continue;
         const t = rayCyl(o, d, p.x, p.z, 0.32, p.y, p.y + 1.8);
         if (t != null) take(t, "ped", p, null);
       }
@@ -162,45 +167,56 @@ export class Combat {
   // ------------------------------------------------------------------------------ firing
 
   // One trigger pull: pellets with spread from the muzzle toward the aim point.
-  shot(w, from, aim, shooter = "player") {
+  // shooter: "player", "car" (the player firing from the car), or the person firing (a crowd entry).
+  // o.dmg scales the damage and o.spread adds to the weapon's own (other people's aim).
+  shot(w, from, aim, shooter = "player", o = {}) {
     const dir = tmpV.subVectors(aim, from).normalize().clone();
     const n = w.pellets || 1;
+    const mine = shooter === "player" || shooter === "car";
     let hits = 0;
     for (let k = 0; k < n; k++) {
-      const d = spreadDir(dir, w.spread || 0);
-      const h = this.ray(from, d, w.range, shooter === "car" ? this.playerCar : null);
+      const d = spreadDir(dir, (w.spread || 0) + (o.spread || 0));
+      const h = this.ray(from, d, w.range, shooter === "car" ? this.playerCar : o.ignoreCar || null, mine ? null : shooter);
       this.tracer(from, h, w.cls === "minigun" || w.cls === "lmg" || k === 0);
-      this.impact(h, d, w.dmg, from);
+      this.impact(h, d, w.dmg * (o.dmg || 1), from, mine, w.silent);
       if (h.kind === "ped" || h.kind === "car") hits++;
     }
-    this.flash(from, w.cls === "shotgun" || w.cls === "minigun" ? 1.5 : 1);
-    if (this.audio) this.audio.shot(w.cls);
-    if (this.crowd) this.crowd.alarm(from.x, from.z, 38, from.x, from.z);
-    if (this.onCrime) this.onCrime("shots", from);
+    this.flash(from, w.silent ? 0.35 : w.cls === "shotgun" || w.cls === "minigun" ? 1.5 : 1);
+    if (this.audio) {
+      const cam = this.U.uCam.value, dist = Math.hypot(from.x - cam.x, from.z - cam.z);
+      this.audio.shot(w.silent ? "silent" : w.cls, mine ? 1 : clamp(1.2 - dist / 120, 0, 0.9));
+    }
+    // A suppressed shot is heard by nobody; anyone else's draws the street's attention.
+    if (!w.silent && this.crowd) this.crowd.alarm(from.x, from.z, 38, from.x, from.z);
+    if (mine && !w.silent && this.onCrime) this.onCrime("shots", from);
     return hits;
   }
 
-  impact(h, d, dmg, from) {
+  impact(h, d, dmg, from, mine = true, silent = false) {
     if (!h.kind) return;
     if (h.kind === "ped") {
       const head = h.y > h.obj.y + 1.55;
-      const down = this.crowd.hurt(h.obj, dmg * (head ? 2.2 : 1), from.x, from.z);
+      const down = this.crowd.hurt(h.obj, dmg * (head ? 2.2 : 1), from.x, from.z, mine);
       this.puff(h.x, h.y, h.z, 0.25, 0.4, [0.62, 0.6, 0.56], 2);
-      if (down && this.onCrime) this.onCrime("down", h);
+      if (mine && this.onCrime) this.onCrime(down ? "down" : "hit", h.obj, silent);
       return;
     }
-    if (h.kind === "car") { this.damageCar(h.obj, dmg, h); this.spark(h.x, h.y, h.z, d, 6, [1, 0.8, 0.45]); return; }
-    if (h.kind === "mycar") { this.spark(h.x, h.y, h.z, d, 6, [1, 0.8, 0.45]); return; }
+    if (h.kind === "me") { if (this.onPlayerHit) this.onPlayerHit(dmg, from.x, from.z); this.puff(h.x, h.y, h.z, 0.2, 0.3, [0.62, 0.6, 0.56], 2); return; }
+    if (h.kind === "car") { this.damageCar(h.obj, dmg, h, mine); this.spark(h.x, h.y, h.z, d, 6, [1, 0.8, 0.45]); return; }
+    if (h.kind === "mycar") { if (!mine && this.onCarHit) this.onCarHit(dmg); this.spark(h.x, h.y, h.z, d, 6, [1, 0.8, 0.45]); return; }
     this.spark(h.x, h.y, h.z, d, 4, [1, 0.75, 0.4]);
     this.puff(h.x, h.y, h.z, 0.35, 0.5, h.kind === "ground" ? [0.7, 0.66, 0.58] : [0.78, 0.76, 0.72], 2);
   }
 
-  damageCar(c, dmg, at) {
+  damageCar(c, dmg, at, mine = true) {
     if (c.hp == null) c.hp = 320;
     if (c.burnt) return;
     c.hp -= dmg;
-    if (c.mode !== "wreck" && c.hp < 200) { c.mode = "wreck"; c.vx = c.vx || 0; c.vz = c.vz || 0; }
-    if (c.hp < 140 && !this.burning.includes(c)) this.burning.push(c);
+    // Mission cars keep driving until they're badly hurt, then they're disabled (stall and smoke).
+    if (c.ai) { if (c.hp < c.hp0 * 0.3) c.disabled = true; }
+    else if (c.mode !== "wreck" && c.hp < 200) { c.mode = "wreck"; c.vx = c.vx || 0; c.vz = c.vz || 0; }
+    if (c.hp < (c.ai ? c.hp0 * 0.45 : 140) && !this.burning.includes(c)) this.burning.push(c);
+    if (mine && this.onCrime) this.onCrime("car", c);
     if (c.hp <= 0) {
       c.burnt = true;
       c.color = 0x2a2624;
@@ -212,11 +228,11 @@ export class Combat {
   swing(w, x, y, z, fx, fz) {
     let hit = false;
     if (this.crowd) for (const p of this.crowd.people) {
-      if (p.downT) continue;
+      if (p.downT || p.hidden) continue;
       const dx = p.x - x, dz = p.z - z, d = Math.hypot(dx, dz);
       if (d > w.range + 0.3 || (dx * fx + dz * fz) / (d || 1) < 0.55) continue;
-      this.crowd.hurt(p, w.dmg, x, z);
-      if (p.downT && this.onCrime) this.onCrime("down", p);
+      this.crowd.hurt(p, w.dmg, x, z, true);
+      if (this.onCrime) this.onCrime(p.downT ? "down" : "hit", p);
       hit = true;
     }
     if (this.traffic) for (const c of this.traffic.cars) {
@@ -228,18 +244,20 @@ export class Combat {
     return hit;
   }
 
-  launch(kind, from, vel) {
-    const mesh = new THREE.Mesh(kind === "rocket" ? this.rocketGeo : weaponGeometry("mergeconflict"), this.projMat);
+  // kind: rocket, shell (grenade launcher), grenade, emp (Kill Switch shell), sticky (Sticky Note charge).
+  launch(kind, from, vel, by = "player") {
+    const geo = kind === "rocket" ? this.rocketGeo : kind === "sticky" ? weaponGeometry("stickynote") || weaponGeometry("mergeconflict") : weaponGeometry("mergeconflict");
+    const mesh = new THREE.Mesh(geo, this.projMat);
     mesh.frustumCulled = false;
-    if (kind === "shell") mesh.scale.setScalar(1.3);
+    if (kind === "shell" || kind === "emp") mesh.scale.setScalar(1.3);
     mesh.position.copy(from);
     this.scene.add(mesh);
-    this.projs.push({ kind, p: from.clone(), v: vel.clone(), mesh, t: 0, fuse: kind === "grenade" ? 2.6 : 8, bounces: 0 });
+    this.projs.push({ kind, by, p: from.clone(), v: vel.clone(), mesh, t: 0, fuse: kind === "grenade" ? 2.6 : kind === "sticky" ? Infinity : 8, bounces: 0 });
     if (this.audio) this.audio.launch(kind);
     if (this.crowd && kind === "rocket") this.crowd.alarm(from.x, from.z, 40, from.x, from.z);
   }
 
-  explode(x, y, z, power = 1, at = null) {
+  explode(x, y, z, power = 1, at = null, by = "player") {
     const R = 7.5 * power;
     for (let k = 0; k < 14; k++) {
       const a = Math.random() * 6.28, r = Math.random() * 1.6 * power;
@@ -252,8 +270,9 @@ export class Combat {
     if (this.onShake) this.onShake(clamp(1.4 - Math.hypot(x - this.U.uCam.value.x, z - this.U.uCam.value.z) / 60, 0, 1));
     if (this.crowd) {
       for (const p of this.crowd.people) {
+        if (p.hidden) continue;
         const d = Math.hypot(p.x - x, p.z - z);
-        if (d < R) { this.crowd.hurt(p, 260 * (1 - d / R), x, z); if (p.downT && this.onCrime) this.onCrime("down", p); }
+        if (d < R) { this.crowd.hurt(p, 260 * (1 - d / R), x, z, by === "player"); if (p.downT && by === "player" && this.onCrime) this.onCrime("down", p); }
       }
       this.crowd.alarm(x, z, 60, x, z);
     }
@@ -265,15 +284,39 @@ export class Combat {
         const k = (1 - d / (R + 1)) * 9;
         c.vx += ((c.x - x) / (d || 1)) * k; c.vz += ((c.z - z) / (d || 1)) * k; c.r += (Math.random() - 0.5) * k * 0.3;
         // Chain reactions, a beat later.
-        setTimeout(() => this.damageCar(c, 650 * (1 - d / (R + 1)), c), 180 + Math.random() * 300);
+        setTimeout(() => this.damageCar(c, 650 * (1 - d / (R + 1)), c, by === "player"), 180 + Math.random() * 300);
       }
     }
     const pl = this.player;
     if (pl && this.onPlayerHit) {
       const d = Math.hypot(pl.x - x, pl.y - y, pl.z - z);
-      if (d < R) this.onPlayerHit(130 * (1 - d / R), x, z);
+      // Inside the car the body takes most of it.
+      if (d < R) this.onPlayerHit(130 * (1 - d / R) * (this.driving ? 0.25 : 1), x, z);
+      if (d < R + 1 && this.driving && this.onCarHit) this.onCarHit(700 * (1 - d / (R + 1)));
     }
-    if (this.onCrime) this.onCrime("blast", { x, z });
+    if (by === "player" && this.onCrime) this.onCrime("blast", { x, z });
+  }
+
+  // Set off every Sticky Note the player has planted. Returns how many went.
+  detonate() {
+    let n = 0;
+    for (const pr of this.projs) if (pr.kind === "sticky" && pr.stuck && !pr.go) { pr.go = true; n++; }
+    return n;
+  }
+  get planted() { return this.projs.filter((pr) => pr.kind === "sticky" && !pr.dead).length; }
+
+  // The Kill Switch: an electric pulse that stalls every car near it.
+  pulse(x, y, z, R = 8) {
+    for (let k = 0; k < 40; k++) {
+      const a = (k / 40) * Math.PI * 2;
+      this.sparks.push({ x, y: y + 0.3, z, vx: Math.cos(a) * 14, vy: 0.6, vz: Math.sin(a) * 14, g: 0, life: 0.45, max: 0.45, size: 0.5, col: [0.45, 0.8, 1], k: 9 });
+    }
+    this.sparks.push({ x, y: y + 0.5, z, vx: 0, vy: 0, vz: 0, g: 0, life: 0.4, max: 0.4, size: 9, col: [0.5, 0.8, 1], k: 6 });
+    if (this.audio) this.audio.boom(0.35);
+    const hit = (c) => Math.hypot(c.x - x, c.z - z) < R + (c.hl || 2);
+    if (this.traffic) for (const c of this.traffic.cars) if (!c.burnt && hit(c)) c.emp = 8;
+    if (this.playerCar && hit(this.playerCar)) this.playerCar.emp = 3;
+    if (this.crowd) this.crowd.alarm(x, z, 20, x, z);
   }
 
   // ---------------------------------------------------------------------------- effects
@@ -305,11 +348,38 @@ export class Combat {
     // Projectiles.
     for (const pr of this.projs) {
       pr.t += dt;
+      // A planted charge rides whatever it stuck to.
+      if (pr.stuck) {
+        const s = pr.stuck, c = s.car;
+        if (c) {
+          if (c !== this.playerCar && !this.traffic.cars.includes(c)) pr.stuck = { car: null };
+          else {
+            const cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+            pr.p.set(c.x + s.lx * cs + s.lz * sn, c.y + s.ly, c.z - s.lx * sn + s.lz * cs);
+          }
+        }
+        pr.mesh.position.copy(pr.p);
+        if (pr.go) { this.scene.remove(pr.mesh); pr.dead = true; this.explode(pr.p.x, pr.p.y, pr.p.z, 1.15, null, pr.by); }
+        continue;
+      }
       const g = pr.kind === "rocket" ? 0 : 9.8;
       pr.v.y -= g * dt;
       const step = pr.v.length() * dt;
       const d = pr.v.clone().normalize();
       const h = this.ray(pr.p, d, step + 0.2);
+      if (h.kind && pr.kind === "sticky") {
+        // Sticks where it lands: to a car (and moves with it) or to a wall or the road.
+        const p = new THREE.Vector3(h.x, h.y, h.z).addScaledVector(d, -0.06);
+        pr.p.copy(p); pr.v.set(0, 0, 0);
+        const c = h.kind === "car" ? h.obj : h.kind === "mycar" ? this.playerCar : null;
+        if (c) {
+          const dx = p.x - c.x, dz = p.z - c.z, cs = Math.cos(c.yaw), sn = Math.sin(c.yaw);
+          pr.stuck = { car: c, lx: dx * cs - dz * sn, lz: dx * sn + dz * cs, ly: p.y - c.y };
+        } else pr.stuck = { car: null };
+        pr.mesh.position.copy(pr.p);
+        if (this.audio) this.audio.click();
+        continue;
+      }
       if (h.kind) {
         if (pr.kind === "grenade" && (h.kind === "world" || h.kind === "ground" || h.kind === "mycar")) {
           const n = new THREE.Vector3(...(h.n || [0, 1, 0]));
@@ -327,16 +397,18 @@ export class Combat {
         this.puff(pr.p.x - d.x * 0.4, pr.p.y, pr.p.z - d.z * 0.4, 0.5, 1.4, [0.8, 0.78, 0.74], 0.2);
       } else pr.mesh.rotation.x += dt * 9;
       pr.fuse -= dt;
-      if (pr.fuse <= 0 || pr.t > 9) {
+      if (pr.fuse <= 0 || (pr.t > 9 && pr.kind !== "sticky")) {
         this.scene.remove(pr.mesh);
         pr.dead = true;
-        this.explode(pr.p.x, pr.p.y, pr.p.z, pr.kind === "grenade" ? 0.9 : 1.1);
+        if (pr.kind === "emp") this.pulse(pr.p.x, pr.p.y, pr.p.z);
+        else this.explode(pr.p.x, pr.p.y, pr.p.z, pr.kind === "grenade" ? 0.9 : 1.1, null, pr.by);
       }
     }
     this.projs = this.projs.filter((p) => !p.dead);
 
     // Burning wrecks smoke and flicker.
     this.burning = this.burning.filter((c) => this.traffic && this.traffic.cars.includes(c));
+    for (const c of this.traffic ? this.traffic.cars : []) if (c.emp > 0 && Math.random() < dt * 8) this.sparks.push({ x: c.x + (Math.random() - 0.5) * 1.5, y: c.y + 1, z: c.z + (Math.random() - 0.5) * 3, vx: 0, vy: 1, vz: 0, g: 0, life: 0.15, max: 0.15, size: 0.3, col: [0.5, 0.85, 1], k: 8 });
     for (const c of this.burning) {
       if (Math.random() < dt * (c.burnt ? 10 : 4)) this.puff(c.x + (Math.random() - 0.5), c.y + 1.2, c.z + (Math.random() - 0.5), c.burnt ? 1.4 : 0.8, 3, c.burnt ? [0.16, 0.15, 0.14] : [0.45, 0.44, 0.42], 1.4);
       if (c.burnt && Math.random() < dt * 14) this.sparks.push({ x: c.x + (Math.random() - 0.5) * 1.6, y: c.y + 0.9, z: c.z + (Math.random() - 0.5) * 2.4, vx: 0, vy: 1.6, vz: 0, g: -0.5, life: 0.5, max: 0.5, size: 0.7 + Math.random() * 0.6, col: [1, 0.45, 0.12], k: 4 });

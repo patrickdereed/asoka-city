@@ -100,6 +100,18 @@ export function drawIcon(g, kind, x, y, r) {
   g.restore();
 }
 
+const BLIP = { enemy: "#e0453a", enemycar: "#e0453a", ally: "#5fbf6a", car: "#ffc667", item: "#ffc667", audit: "#4b8fe0" };
+
+// A contact on the map: a circle with their initial, orange for the story, teal for side quests.
+export function contactIcon(g, x, y, r, c) {
+  g.save();
+  g.fillStyle = c.main ? "#ff6018" : "#2f9e98"; g.strokeStyle = "#fffdf9"; g.lineWidth = Math.max(2, r * 0.2);
+  g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); g.stroke();
+  g.fillStyle = "#fffdf9"; g.font = `700 ${Math.round(r * 1.15)}px "Space Grotesk", system-ui, sans-serif`; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillText(c.letter || "?", x, y + r * 0.06);
+  g.restore();
+}
+
 const iconKind = (v, owned) => (v.kind === "home" ? (owned && owned.includes(v.id) ? "owned" : "home") : v.kind);
 
 const LABELS = [
@@ -124,6 +136,12 @@ export class HUD {
       <div class="hud-scope" id="hd-scope"></div>
       <div class="hud-prompt" id="hd-prompt"></div>
       <div class="hud-toast" id="hd-toast"></div>
+      <div class="hud-obj" id="hd-obj"><b></b><span></span></div>
+      <div class="hud-timer" id="hd-timer"></div>
+      <div class="hud-say" id="hd-say"><b></b><span></span></div>
+      <div class="hud-banner" id="hd-banner"><span class="hd-kicker"></span><b></b><i></i></div>
+      <div class="hud-heat" id="hd-heat">${"<i></i>".repeat(5)}</div>
+      <div class="hud-prog" id="hd-prog"><span></span></div>
       <div class="hud-help" id="hd-help">W/S drive · A/D steer · F get out · E enter · mouse aim and fire · Q weapon · M map · Esc pause</div>`;
     this.el = {
       district: root.querySelector("#hd-district"), dname: root.querySelector("#hd-district b"),
@@ -135,11 +153,65 @@ export class HUD {
       weapon: root.querySelector("#hd-weapon"), wname: root.querySelector("#hd-wname"), wkind: root.querySelector("#hd-wkind"), ammo: root.querySelector("#hd-ammo"),
       cross: root.querySelector("#hd-cross"), scope: root.querySelector("#hd-scope"), prompt: root.querySelector("#hd-prompt"),
       speedBox: root.querySelector(".hud-speed"), miniBox: root.querySelector(".hud-mini"),
+      obj: root.querySelector("#hd-obj"), timer: root.querySelector("#hd-timer"), say: root.querySelector("#hd-say"),
+      banner: root.querySelector("#hd-banner"), heat: root.querySelector("#hd-heat"), prog: root.querySelector("#hd-prog"),
     };
+    this.blips = []; this.contacts = []; this.goal = null; this.gps = null; this.bannerT = 0;
     this.shownMoney = null; this.deltaT = 0;
     this.g = this.el.mini.getContext("2d");
     this.cur = null; this.pending = null; this.pendingT = 0; this.cardT = 0; this.toastT = 0;
     setTimeout(() => this.el.help.classList.add("fade"), 12000);
+  }
+
+  // ------------------------------------------------------------------ missions
+
+  // The objective line at the top, with an optional detail ("3 left").
+  objective(text, sub = "") {
+    const E = this.el.obj;
+    E.classList.toggle("on", !!text);
+    if (text != null) { E.querySelector("b").textContent = text; E.querySelector("span").textContent = sub; }
+  }
+
+  timer(secs) {
+    const E = this.el.timer;
+    E.classList.toggle("on", secs != null);
+    if (secs == null) return;
+    const s = Math.max(0, Math.ceil(secs));
+    E.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    E.classList.toggle("low", secs < 10);
+  }
+
+  // A line of dialogue: who is speaking (and their colour), and what they say. null clears it.
+  say(name, col, text) {
+    const E = this.el.say;
+    E.classList.toggle("on", !!text);
+    if (!text) return;
+    E.querySelector("b").textContent = name || "";
+    E.querySelector("b").style.color = col || "";
+    E.querySelector("span").textContent = text;
+  }
+
+  // Big title card: mission start, passed, failed, a new act.
+  banner(kicker, title, sub = "", secs = 4, kind = "") {
+    const E = this.el.banner;
+    E.className = `hud-banner on ${kind}`;
+    E.querySelector(".hd-kicker").textContent = kicker;
+    E.querySelector("b").textContent = title;
+    E.querySelector("i").textContent = sub;
+    this.bannerT = secs;
+  }
+
+  heat(level, seen) {
+    const E = this.el.heat;
+    E.classList.toggle("on", level > 0);
+    E.classList.toggle("seen", !!seen);
+    [...E.children].forEach((p, i) => p.classList.toggle("lit", i < level));
+  }
+
+  progress(f) {
+    const E = this.el.prog;
+    E.classList.toggle("on", f != null);
+    if (f != null) E.firstChild.style.width = `${clamp(f, 0, 1) * 100}%`;
   }
 
   toast(msg, secs = 3) {
@@ -201,6 +273,7 @@ export class HUD {
     } else this.pending = null;
     if (this.cardT > 0) { this.cardT -= dt; if (this.cardT <= 0) this.el.district.classList.remove("on"); }
     if (this.toastT > 0) { this.toastT -= dt; if (this.toastT <= 0) this.el.toast.classList.remove("on"); }
+    if (this.bannerT > 0) { this.bannerT -= dt; if (this.bannerT <= 0) this.el.banner.classList.remove("on"); }
 
     // Minimap: map image rotated so the camera's heading is up.
     const g = this.g, S = 440, R = S / 2;
@@ -242,6 +315,47 @@ export class HUD {
       g.fillStyle = "#d7a03d"; g.font = '700 26px "Space Mono", monospace'; g.textAlign = "center"; g.textBaseline = "middle";
       g.fillText("$", R + dx * cs - dz * sn, R + dx * sn + dz * cs);
     }
+    // The mission: the route there, people and cars that matter, contacts, and the goal.
+    const mini = (x, z) => { const dx = (x - car.x) * sc, dz = (z - car.z) * sc; return [dx * cs - dz * sn, dx * sn + dz * cs]; };
+    if (this.gps && this.gps.length > 1) {
+      g.save();
+      g.beginPath(); g.arc(R, R, R - 6, 0, Math.PI * 2); g.clip();
+      g.strokeStyle = "rgba(255,96,24,0.85)"; g.lineWidth = 7; g.lineJoin = "round"; g.lineCap = "round";
+      g.beginPath();
+      this.gps.forEach((p, i) => { const [x, y] = mini(p.x, p.z); if (i) g.lineTo(R + x, R + y); else g.moveTo(R + x, R + y); });
+      g.stroke();
+      g.restore();
+    }
+    for (const c of this.contacts) {
+      const [x, y] = mini(c.x, c.z), d = Math.hypot(x, y);
+      const k = d > R - 18 ? (R - 18) / d : 1;
+      if (k < 1 && !c.main) continue;
+      contactIcon(g, R + x * k, R + y * k, k < 1 ? 11 : 15, c);
+    }
+    for (const b of this.blips) {
+      const [x, y] = mini(b.x, b.z), d = Math.hypot(x, y);
+      if (d > R - 10) continue;
+      g.fillStyle = BLIP[b.kind] || "#ffc667"; g.strokeStyle = "#182b2e"; g.lineWidth = 3;
+      g.beginPath();
+      if (b.kind === "enemycar" || b.kind === "car" || b.kind === "audit") g.rect(R + x - 8, R + y - 8, 16, 16); else g.arc(R + x, R + y, 8, 0, Math.PI * 2);
+      g.fill(); g.stroke();
+    }
+    // Where the Audit is searching for you.
+    if (this.search) {
+      const [x, y] = mini(this.search.x, this.search.z);
+      g.save(); g.beginPath(); g.arc(R, R, R - 6, 0, Math.PI * 2); g.clip();
+      g.fillStyle = "rgba(75,143,224,0.22)"; g.strokeStyle = "rgba(75,143,224,0.8)"; g.lineWidth = 3;
+      g.beginPath(); g.arc(R + x, R + y, this.search.r * sc, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.restore();
+    }
+    if (this.goal) {
+      const [x, y] = mini(this.goal.x, this.goal.z), d = Math.hypot(x, y);
+      const k = d > R - 20 ? (R - 20) / d : 1;
+      g.save(); g.translate(R + x * k, R + y * k);
+      g.fillStyle = "#ffc667"; g.strokeStyle = "#182b2e"; g.lineWidth = 4;
+      g.beginPath(); g.moveTo(0, -15); g.lineTo(13, 0); g.lineTo(0, 15); g.lineTo(-13, 0); g.closePath(); g.fill(); g.stroke();
+      g.restore();
+    }
     // Player arrow.
     g.save();
     g.translate(R, R);
@@ -262,7 +376,7 @@ export class BigMap {
     this.legend = root.querySelector(".legend");
   }
 
-  draw(car, venues = [], owned = [], landmarks = [], found = []) {
+  draw(car, venues = [], owned = [], landmarks = [], found = [], extra = {}) {
     const g = this.cv.getContext("2d");
     g.drawImage(this.img, 0, 0);
     g.textAlign = "center"; g.textBaseline = "middle";
@@ -293,6 +407,22 @@ export class BigMap {
       drawIcon(c.getContext("2d"), k, 18, 18, 15);
       return `<li><img src="${c.toDataURL()}" alt=""><span>${ICONS[k].label}</span><b>${counts[k]}</b></li>`;
     }).join("");
+    const P = (x, z) => [(x + HALF) / M_PER_PX, (z + HALF) / M_PER_PX];
+    if (extra.gps && extra.gps.length > 1) {
+      g.strokeStyle = "rgba(255,96,24,0.9)"; g.lineWidth = 4; g.lineJoin = "round"; g.lineCap = "round";
+      g.beginPath(); extra.gps.forEach((p, i) => { const [x, y] = P(p.x, p.z); if (i) g.lineTo(x, y); else g.moveTo(x, y); }); g.stroke();
+    }
+    for (const c of extra.contacts || []) {
+      const [x, y] = P(c.x, c.z);
+      contactIcon(g, x, y, 12, c);
+      g.font = '600 14px "Space Grotesk", system-ui, sans-serif'; g.lineWidth = 4; g.strokeStyle = "rgba(255,253,249,0.92)"; g.fillStyle = "#182b2e";
+      g.strokeText(c.label, x, y + 22); g.fillText(c.label, x, y + 22);
+    }
+    if (extra.goal) {
+      const [x, y] = P(extra.goal.x, extra.goal.z);
+      g.fillStyle = "#ffc667"; g.strokeStyle = "#182b2e"; g.lineWidth = 3;
+      g.beginPath(); g.moveTo(x, y - 12); g.lineTo(x + 10, y); g.lineTo(x, y + 12); g.lineTo(x - 10, y); g.closePath(); g.fill(); g.stroke();
+    }
     const px = (car.x + HALF) / M_PER_PX, py = (car.z + HALF) / M_PER_PX;
     g.save(); g.translate(px, py); g.rotate(-car.yaw);
     g.fillStyle = "#ff6018"; g.strokeStyle = "#fffdf9"; g.lineWidth = 3;
