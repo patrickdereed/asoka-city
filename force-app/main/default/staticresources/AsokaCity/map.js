@@ -735,7 +735,8 @@ export class World {
             if (shoreDist(qx, qz) > 1 && !this.nearRoad(qx, qz, out, 1.5)) this.addPalm(out, r, qx, qz);
           }
         }
-        if (elevated && e.bridge) out.glows.push({ kind: "amber", x, z, y: y + 0.3, id: -1 });
+        // Amber marker lamps set into the top of each parapet, not floating over the lanes.
+        if (elevated && e.bridge) for (const side of [-1, 1]) out.glows.push({ kind: "amber", x: x - tz * (e.hw + 0.22) * side, z: z + tx * (e.hw + 0.22) * side, y: y + 1.02, id: -1 });
       }
       // Parked cars in the kerbside lane of town streets, clear of the junctions.
       if (e.type === 0 && URBAN.has(districtAt(p.x, p.z)) && p.y - this.height(p.x, p.z) < 0.4) {

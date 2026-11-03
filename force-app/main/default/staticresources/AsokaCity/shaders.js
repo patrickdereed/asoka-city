@@ -37,7 +37,8 @@ vec3 lamps(vec3 wp, vec3 n) {
     vec3 l = d / max(dl, .001);
     float k = 1. - dl / r;
     bool spot = uPD[i].w > -1.5;
-    float cone = spot ? smoothstep(uPD[i].w, uPD[i].w + .1, dot(-l, uPD[i].xyz)) : 1.;
+    // A street lamp's head shines down, so nothing above it is lit (walls glowed up to the roofline).
+    float cone = spot ? smoothstep(uPD[i].w, uPD[i].w + .1, dot(-l, uPD[i].xyz)) : smoothstep(-.1, .35, l.y);
     // A headlight's beam is focused, so it carries much further than a bare lamp.
     s += uPC[i] * (k * k / (1. + dl * dl * (spot ? .004 : .03))) * cone * (max(dot(n, l), 0.) * .8 + .2);
   }
@@ -335,13 +336,13 @@ void main() {
       col *= mix(1., (1. - .2 * seam) * (.9 + .15 * hash12(vec2(floor(vW.x / 1.2), seed))), fa);
       col *= 1. - .18 * smoothstep(.6, .85, vnoise(vW.xz * .15 + seed * 5.));
     }
-    if (st > 9.5 && st < 10.5) emi = base * (1. + uNight * 6.);
+    if (st > 9.5 && st < 10.5) emi = base * (1. + uNight * 2.);
   } else if (n.y < -.5) {
     col = base * .5 * amb(n);
   } else if (st > 8.5) {
     float stain = smoothstep(.4, .9, vnoise(vec2(vW.x + vW.z, vW.y * 3.) * .3)) * .2;
     col = base * (.85 + .2 * nz - stain) * lc;
-    if (st > 9.5 && st < 10.5) emi = base * (1. + uNight * 6.);
+    if (st > 9.5 && st < 10.5) emi = base * (1. + uNight * 2.);
   } else {
     vec2 uv = vUv;
     int si = int(st);
@@ -507,10 +508,10 @@ void main() {
       sn = mix(sn, vec3(.95, .92, .85) * lc, letter);
       sn = mix(sn, granite * lc * .8, step(uv.y, .45) * (1. - inGlass));
       float shopOn = step(.15, hs);
-      vec3 snE = (src * shopL * srg * 2.2 * inGlass * (1. - sframe) * shopOn + letter * shopL * 3.) * uNight + src * shopL * srg * .35 * inGlass * (1. - sframe) * shopOn * (1. - uNight);
+      vec3 snE = (src * shopL * srg * 1.1 * inGlass * (1. - sframe) * shopOn + letter * shopL * 2.) * uNight + src * shopL * srg * .35 * inGlass * (1. - sframe) * shopOn * (1. - uNight);
       near = sn; nearE = snE;
       far = mix(granite * lc, shopL * .25 * amb(n), .55);
-      farE = shopL * .7 * uNight;
+      farE = shopL * .4 * uNight;
     } else if ((st == 3. || st == 8.) && uv.y < 2.6) {
       float bay = floor(uv.x), hb = hash12(vec2(bay, seed * 5.7));
       if (hb < .3) {
@@ -535,10 +536,10 @@ void main() {
     if (neonI >= 0. && uv.y > top - 1.2 && uv.y < top - .35) {
       vec3 nc = NEON[int(neonI)];
       col = nc * lc * .6;
-      emi += nc * (.6 + uNight * 7.);
+      emi += nc * (.5 + uNight * 1.5);
     }
     if (st == 1. && neonI >= 0. && uv.y > 3.9 && uv.y < 4.25) {
-      emi += NEON[int(mod(neonI + 2., 6.))] * uNight * 6.;
+      emi += NEON[int(mod(neonI + 2., 6.))] * uNight * 1.6;
     }
   }
   gl_FragColor = vec4(fog(col + emi, vW), 1.);
@@ -617,11 +618,12 @@ void main() {
   vec3 shallow = lin(vec3(.3, .72, .68)), deep = lin(vec3(.05, .22, .27));
   float sh = shadowAt(vW, vec3(0., 1., 0.));
   vec3 wc = mix(shallow, deep, smoothstep(.3, 8., depth)) * light(vec3(0., 1., 0.), sh) * .8;
-  vec3 col = mix(wc, skyRefl(R), fres);
+  // Open water mirrors the sky (skyRefl's street-level band is for glass in town, and turns the sea to mud).
+  vec3 sky = mix(uFogCol, uZenith, clamp(R.y * 2.2, 0., 1.)) + uSunGlow * pow(max(dot(R, uSunDir), 0.), 10.) * .6;
+  vec3 col = mix(wc, sky, fres);
   col += uLightCol * pow(max(dot(R, uLightDir), 0.), 220.) * 14. * sh;
   float foam = smoothstep(.7, 0., depth) * (.55 + .45 * sin(depth * 9. - t * 2. + vnoise(p * .2) * 6.));
   col = mix(col, vec3(.95, .93, .88) * light(vec3(0., 1., 0.), sh), clamp(foam, 0., 1.) * .85);
-  col += uNight * vec3(1., .5, .2) * pow(vnoise(p * .04 + vec2(t * .02, 0.)), 5.) * .4;
   gl_FragColor = vec4(fog(col, vW), 1.);
 }`;
 
@@ -692,6 +694,8 @@ void main() {
     wp = iPos + vec3(q.x * c.x - q.y * c.y, 0., q.x * c.y + q.y * c.x);
   } else {
     size = max(size, dist * .004);
+    // Up close a halo would wash over the wall behind it; the eye sees the bulb, not a fog of light.
+    a *= mix(.35, 1., smoothstep(4., 20., dist));
     vec3 right = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
     vec3 up = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);
     wp = iPos + (right * position.x + up * position.y) * size;

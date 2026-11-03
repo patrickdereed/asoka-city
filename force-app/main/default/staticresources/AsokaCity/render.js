@@ -152,7 +152,7 @@ const GLOW_KIND = {
   lamp: { col: [1, 0.8, 0.52], size: 1.6, day: 0, i: 3.5 },
   pool: { col: [1, 0.72, 0.42], size: 9, day: 0, i: 0.8 },
   beacon: { col: [1, 0.15, 0.1], size: 1.1, day: 0.06, i: 3 },
-  amber: { col: [1, 0.66, 0.3], size: 1.3, day: 0, i: 2.5 },
+  amber: { col: [1, 0.66, 0.3], size: 0.35, day: 0, i: 2.2 },
   ring: { col: [1, 0.45, 0.2], size: 9, day: 0.12, i: 1.2 },
   neon: { col: [1, 0.45, 0.2], size: 3.2, day: 0, i: 1.4 },
   streak: { i: 1.1 },
@@ -803,9 +803,9 @@ function buildGlows(world, data, knocked) {
   for (const b of data.buildings) {
     if (b.neon < 0 || b.style !== ST.DECO) continue;
     const c = hex(NEON[b.neon]);
-    for (const [x, z] of [[b.x0, b.z0], [b.x1, b.z0], [b.x1, b.z1], [b.x0, b.z1]]) list.push([x, b.gy + b.h - 0.8, z, c, 0, 3.4, 0, -1, 1.2, -1, b.gy]);
-    const mx = (b.x0 + b.x1) / 2, mz = (b.z0 + b.z1) / 2;
-    list.push([mx, b.gy + 4.1, b.z0 - 0.3, c, 0, 5, -1, -1, 0.8, -1, b.gy]);
+    // The lower sign band's reflection in the wet street.
+    const mx = (b.x0 + b.x1) / 2;
+    list.push([mx, b.gy + 4.1, b.z0 - 0.3, c, 0, 4, -1, -1, 0.45, -1, b.gy]);
   }
   for (const v of data.venues || []) {
     if (v.sign == null) continue;
