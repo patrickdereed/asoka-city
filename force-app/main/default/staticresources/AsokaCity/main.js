@@ -287,11 +287,16 @@ function makeAmmoGeo() {
   return g.build();
 }
 
-// Knocked-out people's belongings land round them.
+// Knocked-out people's belongings: their cash rises out of the body and hangs over its chest (they
+// topple away from the hit, head first), anything else lands round them.
 function dropLoot(p, items) {
+  const reach = ((p.person && p.person.height) || 1.6) * 0.55;
   items.forEach((it, i) => {
-    const a = i * 2.1 + Math.random() * 1.5, x = p.x + Math.cos(a) * 0.8, z = p.z + Math.sin(a) * 0.8;
-    const d = { ...it, x, z, y: world.ground(x, z, p.y + 1) + 0.15, t: 0, mesh: null };
+    const over = it.kind === "cash";
+    const a = i * 2.1 + Math.random() * 1.5;
+    const x = over ? p.x + Math.sin(p.fallYaw || 0) * reach : p.x + Math.cos(a) * 0.8;
+    const z = over ? p.z + Math.cos(p.fallYaw || 0) * reach : p.z + Math.sin(a) * 0.8;
+    const d = { ...it, x, z, y: world.ground(x, z, p.y + 1) + 0.15, t: 0, lift: over ? 0.4 : 0, mesh: null };
     if (it.kind === "gun") d.mesh = new THREE.Mesh(weaponGeometry(it.id), arsenal.mat);
     else if (it.kind === "ammo") d.mesh = new THREE.Mesh(ammoGeo || (ammoGeo = makeAmmoGeo()), mats.prop);
     if (d.mesh) { d.mesh.frustumCulled = false; scene.add(d.mesh); }
@@ -1744,8 +1749,11 @@ function render(dt) {
     const spin = time * 1.6 + d.x, bob = 0.35 + Math.sin(time * 3 + d.z) * 0.06;
     if (d.kind === "cash") {
       if (cn >= 48) continue;
-      e3.set(0, spin, 0); q4.setFromEuler(e3); v3.set(d.x, d.y + bob, d.z);
+      // Floats up out of the body over its first half second as they go down.
+      const u = Math.min(1, d.t / 0.6), rise = d.lift * u * u * (3 - 2 * u);
+      e3.set(0, spin, 0); q4.setFromEuler(e3); v3.set(d.x, d.y + bob + rise, d.z);
       m4.compose(v3, q4, s3); cashMesh.setMatrixAt(cn++, m4);
+      if (d.lift && n < 896) setGlow(carGlow, n++, d.x, d.y + bob + rise, d.z, [1, 0.8, 0.35], 1, 0.6, 0, -1, 1.4, d.y);
     } else if (d.mesh) {
       d.mesh.position.set(d.x, d.y + bob, d.z);
       d.mesh.rotation.set(0, spin, d.kind === "gun" ? 0 : 0);
