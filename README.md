@@ -165,10 +165,18 @@ it swings on its front hinge while you open it, haul the driver out by the colla
 get up and run off down the pavement) and climb in. Press ? any time for every control (keyboard, mouse and
 gamepad); Esc pauses, with the same list and brightness and contrast sliders, saved per player and applied
 in the final pass (`post.js`). Each avatar is
-turned to face square to its hips and shoulders, not its splayed feet, so it runs straight. The gait plants
-each foot for most of the cycle and sweeps it back at exactly the body's speed (so feet don't slide), lands
-on the heel and pushes off the toes, keeps the sole level through the swing, and dips the hips over the
-planted leg.
+turned to face square to its hips and shoulders, not its splayed feet, so it runs straight. The gait (`Person.update` in `people.js`) solves the planted leg's
+hip angle every frame so the foot stays where it landed, then measures the real ankle heights on the skeleton and
+sets the hips from the planted one, so a planted foot is always on the ground and a swinging one never goes
+through it. Walking, each foot is down 60% of the cycle: heel strike, roll, push off the toes. Running is its
+own gait, not fast walking: about 170–190 steps a minute (the stride lengthens with speed, scaled to the
+avatar's leg length), each foot down only 24–34% of the cycle, landing just ahead of the hips with the knee
+already bent and sinking into mid-stance, then pushing off as the heel lifts; the swing knee folds to about
+110° (heel up towards the seat) while the thigh drives forward to about 47°, and the lower leg reaches out
+just before the landing. Between steps both feet leave the ground and the body rises; the hips bob 7–11 cm.
+The arms hold the elbows near 90° and drive more forward than back; the chest leans into the run and turns
+against the hips. (The lean and twist go on `Bip01_Spine1`: in these Biped rigs the thighs hang off
+`Bip01_Spine`, so turning that swings the legs too.)
 
 After dark the ten nearest lights are real: street lamps as point lights and headlights as spots
 (`lamps()` in `shaders.js`, picked each frame by `pickLamps` in `main.js`), lighting the street, the

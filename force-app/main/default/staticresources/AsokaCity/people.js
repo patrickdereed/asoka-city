@@ -166,7 +166,11 @@ export class Person {
     // The legs' neutral pose (straight, feet forward), before the idle clip spreads them.
     this.legRest = LEGS.map((n) => this.bones[n]).filter(Boolean).map((b) => [b, b.quaternion.clone()]);
     this.inner.updateMatrixWorld(true);
-    this.legLen = this.bones.Bip01_L_Thigh.getWorldPosition(new THREE.Vector3()).distanceTo(this.bones.Bip01_L_Foot.getWorldPosition(new THREE.Vector3())) || 0.9;
+    const wp = (n) => this.bones[n].getWorldPosition(new THREE.Vector3());
+    this.legLen = wp("Bip01_L_Thigh").distanceTo(wp("Bip01_L_Foot")) || 0.9;
+    this.lt = wp("Bip01_L_Thigh").distanceTo(wp("Bip01_L_Calf")) || this.legLen / 2;    // hip to knee
+    this.lc = wp("Bip01_L_Calf").distanceTo(wp("Bip01_L_Foot")) || this.legLen / 2;     // knee to ankle
+    this.toeLen = this.bones.Bip01_L_Toe0 ? wp("Bip01_L_Foot").distanceTo(wp("Bip01_L_Toe0")) : 0.13;   // ankle to the ball of the foot
     if (idle) { this.idle = this.mixer.clipAction(idle); this.idle.play(); this.idle.time = Math.random() * idle.duration; }
     this.mixer.update(0);
     this.inner.updateMatrixWorld(true);
@@ -202,6 +206,13 @@ export class Person {
     this.sFore = probe(B.Bip01_L_Forearm, B.Bip01_L_Hand, true);
     this.sForeR = probe(B.Bip01_R_Forearm, B.Bip01_R_Hand, true);
     this.height = B.Bip01_Head ? B.Bip01_Head.getWorldPosition(new THREE.Vector3()).y : 1.6;
+    // How high the ankles sit standing with the legs straight: the gait keeps a planted one there.
+    const idleQ = (this.legRest || []).map(([b]) => b.quaternion.clone());
+    for (const [b, q] of this.legRest || []) b.quaternion.copy(q);
+    this.inner.updateMatrixWorld(true);
+    this.ankle0 = (B.Bip01_L_Foot.getWorldPosition(new THREE.Vector3()).y + B.Bip01_R_Foot.getWorldPosition(new THREE.Vector3()).y) / 2 - this.holder.position.y;
+    (this.legRest || []).forEach(([b], i) => b.quaternion.copy(idleQ[i]));
+    this.inner.updateMatrixWorld(true);
   }
 
   playIdle(name) {
@@ -219,11 +230,15 @@ export class Person {
     const want = clamp(speed / 1.2, 0, 1);
     this.walkW = lerp(this.walkW, want, Math.min(1, dt * 6));
     this.runW = lerp(this.runW, run, Math.min(1, dt * 4));
-    const stride = lerp(1.45, 2.6, this.runW);
+    // One cycle is two steps. Walking it's about 1.45 m. Runners lengthen the stride with speed but
+    // keep the cadence near 170-190 steps a minute, so a jog never turns into a frantic patter.
+    const runCycle = (2 * Math.max(speed, 2.5)) / ((2.6 + 0.08 * speed) * Math.sqrt(0.9 / (this.legLen || 0.9)));
+    const stride = lerp(1.45, runCycle, this.runW);
     this.phase += ((speed / stride) * Math.PI * 2) * dt;
     if (this.down > 0) return;
     this.mixer.update(dt);
     if (this.walkW < 0.01 && this.dive <= 0) {
+      this.inner.position.y = this.hipY = 0;
       if (this.arms) { this.holder.updateMatrixWorld(true); this.applyArms(); }
       return;
     }
@@ -233,55 +248,115 @@ export class Person {
     // The idle clip stands with the feet apart and turned out; walking from that leaves every leg
     // canted. Ease the legs back to neutral as the walk comes in, then swing them.
     for (const [b, q] of this.legRest || []) b.quaternion.slerp(q, Math.min(1, w));
-    // A gait, not a pendulum: each leg spends most of the cycle planted (stance), sweeping back at
-    // exactly the body's speed so the foot stays put on the ground, then swings forward quickly with
-    // the knee bent and the toes lifted clear. The sweep that keeps the foot still is set by the stride
-    // and leg length (less the heel-to-toe roll), and the hips dip as the planted leg leans.
-    const beta = lerp(0.6, 0.38, r), Ll = this.legLen || 0.9;
-    const th = Math.asin(clamp((beta * stride - 0.2) / (2 * Ll), 0, 0.6)) * w;
+    // A gait, not a pendulum. Each leg is planted for part of the cycle (stance) and swings through
+    // the rest. While it's planted the hip angle is solved, frame by frame, so the foot stays exactly
+    // where it landed as the body passes over it, with the knee giving a little to take the weight.
+    // Walking, a foot is down 60% of the time (both, briefly, at each step). Running, only about 30%:
+    // it lands just ahead of the hips with the knee already bent, sinks into mid-stance, and pushes off
+    // behind; then the knee folds tight (heel up towards the seat), the thigh drives forward, and the
+    // lower leg reaches out and pulls back just before the next landing. Between steps both feet are off
+    // the ground and the body rises. The hips ride on whichever foot is lowest, so the planted one is
+    // always on the ground and nothing dangles.
+    const Ll = this.legLen || 0.9, lt = this.lt || Ll / 2, lc = this.lc || Ll / 2;
     const smooth = (a, b, x) => { const t = clamp((x - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+    // The faster the run, the shorter each foot is down: about a third of the cycle jogging, under 30% fast.
+    const beta = lerp(0.6, clamp(0.4 - 0.03 * speed, 0.24, 0.34), r);
+    const D = Math.min(beta * stride, lerp(0.95, 1.0, r) * Ll);        // ground the body covers over a planted foot
+    const x0 = lerp(0.5, 0.4, r) * D;                                   // it lands this far ahead of the hip
+    const kC = lerp(0.06, 0.25, r), kM = lerp(0.24, 0.8, r), kO = lerp(0.12, 0.2, r);   // knee: landing, mid-stance, toe-off
+    const kStance = (u) => lerp(kC, kO, u) + (kM - (kC + kO) / 2) * Math.sin(Math.PI * u);
+    // The hip angle that puts the ankle x metres ahead of the hip with the knee bent k.
+    const solve = (x, k) => {
+      let a = Math.asin(clamp(x / (lt + lc), -1, 1)) + (k * lc) / (lt + lc);
+      for (let i = 0; i < 3; i++) {
+        const f = lt * Math.sin(a) + lc * Math.sin(a - k) - x, df = lt * Math.cos(a) + lc * Math.cos(a - k);
+        a -= f / Math.max(df, 0.2);
+      }
+      return a;
+    };
+    const aC = solve(x0, kC), aO = solve(x0 - D, kO);
+    const aMax = lerp(aC + 0.04, 0.82, r);                              // knee drive: thigh at its highest
+    const kPk = lerp(1.05, 1.45 + 0.09 * speed, r);                     // swing knee at its tightest
+    // Swing timing: when the thigh is highest, when the knee is tightest, when it starts to open out
+    // and when it's straight again for the landing. Running, the knee stays folded until late.
+    const qa = lerp(0.85, 0.68, r), qk = lerp(0.4, 0.36, r), qo = lerp(0.4, 0.62, r), qe = lerp(1, 0.95, r);
     const leg = (p) => {
-      let a, k, push = 0, heel = 0;
+      let a, k, push, heel;
       if (p < beta) {
         const u = p / beta;
-        a = th * (1 - 2 * u);
-        k = (lerp(0.22, 0.45, r) * Math.sin(Math.PI * Math.min(1, u * 1.6)) + 0.04) * w;
-        heel = 0.18 * (1 - smooth(0, 0.18, u)) * w;          // lands on the heel, rolls flat
-        push = 0.5 * smooth(0.68, 1, u) * w;                  // and pushes off the toes
+        k = kStance(u);
+        a = solve(x0 - D * u, k);
+        heel = lerp(0.18, 0.05, r) * (1 - smooth(0, 0.18, u));        // heel strike walking, midfoot running
+        push = lerp(0.5, 0.6, r) * smooth(0.65, 1, u);                 // and off the toes
       } else {
         const q = (p - beta) / (1 - beta);
-        a = -th + 2 * th * (0.5 - 0.5 * Math.cos(Math.PI * q));
-        k = lerp(0.82, 1.5, r) * Math.pow(Math.sin(Math.PI * Math.min(1, q * 1.25)), 1.2) * w;
-        push = 0.5 * (1 - smooth(0, 0.25, q)) * w;
-        heel = 0.12 * smooth(0.45, 1, q) * w;                 // toes up, ready for the heel strike
+        a = q < qa ? lerp(aO, aMax, smooth(0, qa, q)) : lerp(aMax, aC, smooth(qa, 1, q));
+        k = q < qk ? lerp(kO, kPk, smooth(0, qk, q)) : q < qo ? kPk : lerp(kPk, kC, smooth(qo, qe, q));
+        push = lerp(0.5, 0.6, r) * (1 - smooth(0, 0.25, q));
+        heel = lerp(0.12, 0.04, r) * smooth(0.45, 1, q);                // toes up, ready to land
       }
-      return { a, k, push, heel, stance: p < beta };
+      return { a: a * w, k: k * w, push: push * w, heel: heel * w, stance: p < beta };
     };
     const TAU = Math.PI * 2, pL = ((this.phase / TAU) % 1 + 1) % 1, pR = (pL + 0.5) % 1;
     const legs = [["L", leg(pL)], ["R", leg(pR)]];
-    let support = Infinity;
     for (const [side, g] of legs) {
       turn(B[`Bip01_${side}_Thigh`], L, this.sThigh * g.a, hq);
       turn(B[`Bip01_${side}_Calf`], L, this.sCalf * g.k, hq);
       // Keep the sole level whatever the hip and knee are doing, then roll it heel-to-toe.
       turn(B[`Bip01_${side}_Foot`], L, -(this.sThigh * g.a + this.sCalf * g.k) + this.sCalf * (g.push - g.heel), hq);
-      if (g.stance) support = Math.min(support, Math.abs(g.a));
     }
-    // Arms swing against the legs, elbows soft and bending more on the forward swing.
-    const armA = lerp(0.36, 0.62, r) * w, foreA = lerp(0.3, 1.35, r) * w;
+    // Where the ankles actually are now, measured on the skeleton (each avatar's legs differ), as heights
+    // above where they'd be standing still.
+    this.inner.position.y = 0;
+    this.inner.updateMatrixWorld(true);
+    const hy = this.holder.position.y;
+    const ankle = (side) => B[`Bip01_${side}_Foot`].getWorldPosition(tv).y - hy - this.ankle0;
+    const hL = ankle("L"), hR = ankle("R");
+    const sL = legs[0][1].stance, sR = legs[1][1].stance;
+    // The hips sit on the planted leg (the lower foot when both are down, walking). In a run's flight
+    // the lowest foot rises and falls a few centimetres: the body is in the air between steps.
+    let lift = 0, fp = 0;
+    if (!sL && !sR) { fp = clamp(((pL % 0.5) - beta) / (0.5 - beta), 0, 1); lift = 0.055 * r * w * Math.sin(Math.PI * fp); }
+    // Pushing off, the heel comes up and the ankle rises with it while the toes stay down (and it
+    // eases off again just after the foot leaves, so the flight starts where the push ended).
+    const up = (g) => (this.toeLen || 0.13) * Math.sin(g.push);
+    const aL = hL - up(legs[0][1]), aR = hR - up(legs[1][1]);
+    // In flight, hand over smoothly from the foot that just left (the one earlier in its swing) to the
+    // one about to land, so the hips don't jump at either end.
+    const flightBase = Math.min(pL < pR ? lerp(aL, aR, smooth(0, 1, fp)) : lerp(aR, aL, smooth(0, 1, fp)), aL, aR);
+    const base = sL && sR ? Math.min(aL, aR) : sL ? aL : sR ? aR : flightBase;
+    const drop = base - lift;
+    // A swinging foot that would still dip below the ground (as it passes under the body): fold its knee more.
+    for (const [side, g] of legs) {
+      const h = (side === "L" ? hL : hR) - drop;
+      if (g.stance || h > 0.03) continue;
+      const extra = clamp((0.03 - h) * 2.4, 0, 0.7);
+      turn(B[`Bip01_${side}_Calf`], L, this.sCalf * extra, hq);
+      turn(B[`Bip01_${side}_Foot`], L, -this.sCalf * extra, hq);
+    }
+    // Arms swing against the legs. Walking: a loose swing from the shoulder, elbows soft. Running: the
+    // elbows held at about a right angle, closing a little as each arm comes forward, and the arms
+    // driven more forward than back.
+    const armA = lerp(0.36, 0.55, r) * w, bias = 0.1 * r * w;
+    const elbow = lerp(0.3, 1.45, r) * w, elbowSw = lerp(0.18, 0.22, r) * w;
     const cL = Math.cos(TAU * pL);
-    turn(B.Bip01_L_UpperArm, L, -this.sArmL * armA * cL, hq);
-    turn(B.Bip01_R_UpperArm, L, this.sArmR * armA * cL, hq);
-    turn(B.Bip01_L_Forearm, L, this.sFore * (foreA * 0.55 + foreA * 0.45 * Math.max(0, -cL)), hq);
-    turn(B.Bip01_R_Forearm, L, this.sForeR * (foreA * 0.55 + foreA * 0.45 * Math.max(0, cL)), hq);
-    if (B.Bip01_Spine) {
-      turn(B.Bip01_Spine, Y, 0.08 * w * cL, hq);
-      turn(B.Bip01_Spine, L, -this.sThigh * 0.16 * r * w, hq);
+    turn(B.Bip01_L_UpperArm, L, this.sArmL * (-armA * cL + bias), hq);
+    turn(B.Bip01_R_UpperArm, L, this.sArmR * (armA * cL + bias), hq);
+    turn(B.Bip01_L_Forearm, L, this.sFore * (elbow - elbowSw * cL), hq);
+    turn(B.Bip01_R_Forearm, L, this.sForeR * (elbow + elbowSw * cL), hq);
+    // The chest turns against the hips and leans into a run. That's Spine1: in these Biped rigs the
+    // thighs hang off Bip01_Spine, so turning that swung the legs with the torso (and tipped them back).
+    const chest = B.Bip01_Spine1 || B.Bip01_Spine;
+    if (chest) {
+      turn(chest, Y, 0.08 * w * cL, hq);
+      turn(chest, L, -this.sThigh * 0.16 * r * w, hq);
     }
-    // The hips ride over the planted leg: lowest when it leans, highest as it passes under (in a run,
-    // up again in the flight between steps).
-    const drop = support < Infinity ? Ll * (1 - Math.cos(support)) : 0;
-    this.inner.position.y = -drop - 0.035 * r * w * (support < Infinity ? 1 : 0);
+    // Eased, not snapped, so a foot taking over from the other never pops the body; it rises faster
+    // than it settles, so a planted foot never sinks into the ground.
+    const target = -drop * Math.min(1, w * 2);
+    if (this.hipY == null) this.hipY = target;
+    this.hipY += (target - this.hipY) * (1 - Math.exp(-dt * (target > this.hipY ? 70 : 30)));
+    this.inner.position.y = this.hipY;
     if (this.dive > 0) {
       // Jumping out of the way: a quick sideways hop with the arms up.
       const k = Math.sin(Math.min(1, this.dive) * Math.PI);
