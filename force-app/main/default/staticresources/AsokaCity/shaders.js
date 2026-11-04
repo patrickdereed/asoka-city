@@ -44,6 +44,46 @@ vec3 lamps(vec3 wp, vec3 n) {
   }
   return s;
 }
+// How worn a place is, 0 (just built) to 1 (decades of neglect), by district (mirrors districtAt in
+// map.js): the Pipeline's docks oldest, then the Cadence deco quarter, the gardens suburbs and Scratch
+// Key; the Console downtown and Preview Point newest. A slow drift across each softens the borders.
+float ageAt(vec2 p) {
+  float x = p.x, z = p.y, a;
+  if (x > 1800.) a = z < -1190. ? .6 : z < 710. ? .35 : .1;
+  else if (z < -2304.) a = .4;
+  else if (z > 2304. && x > -3328.) a = .9;
+  else if (x < -1536. && z < -1024.) a = .5;
+  else if (x >= -3328. && x <= -1792. && z >= -1024. && z <= 896.) a = .4;
+  else if (x > -1000. && x < 1100. && z > -1024. && z < 900.) a = .15;
+  else if (z < -1024.) a = .45;
+  else if (x < -1300.) a = .6;
+  else if (z > 900.) a = .7;
+  else a = .45;
+  return clamp(a + (vnoise(p * .004) - .5) * .3, 0., 1.);
+}
+// Hairline cracks: in a few cells of size s (a share d of them), a wandering line with a branch off it.
+// Fades out before it's thinner than a pixel.
+float cracks(vec2 p, float s, float d, float seed) {
+  // The pixel's footprint first, before any branch, so the derivatives are always defined.
+  float fw = max(fwidth(p.x), fwidth(p.y)) / s, fa = clamp(1. - 60. * fw, 0., 1.);
+  vec2 c = floor(p / s), q = fract(p / s) - .5;
+  float h = hash12(c + seed * 7.7);
+  if (h >= d || fa <= 0.) return 0.;
+  float k = h / d, ang = k * 6.2832 + seed;
+  vec2 dir = vec2(cos(ang), sin(ang)), off = (vec2(hash12(c + 3.1), hash12(c + 5.3)) - .5) * .3;
+  vec2 r = q - off;
+  float al = dot(r, dir), ac = dot(r, vec2(-dir.y, dir.x));
+  ac += (vnoise(vec2(al * 7., k * 40.)) - .5) * .12 + (vnoise(vec2(al * 29., k * 17.)) - .5) * .035;
+  float len = .2 + .2 * fract(k * 7.3);
+  float w = fw * 1.2 + .003;
+  float line = (1. - smoothstep(0., w, abs(ac))) * (1. - smoothstep(len * .7, len, abs(al)));
+  // The branch: from partway along, off at an angle, shorter.
+  vec2 b0 = off + dir * len * (fract(k * 13.) - .5), bd = vec2(cos(ang + .9), sin(ang + .9));
+  vec2 rb = q - b0;
+  float bl = dot(rb, bd), bc = dot(rb, vec2(-bd.y, bd.x)) + (vnoise(vec2(bl * 11., k * 23.)) - .5) * .08;
+  line = max(line, (1. - smoothstep(0., w, abs(bc))) * step(0., bl) * (1. - smoothstep(len * .35, len * .5, bl)));
+  return line * fa;
+}
 vec3 amb(vec3 n) { return mix(uGndAmb, uSkyAmb, n.y * .5 + .5); }
 vec3 light(vec3 n, float sh) { return amb(n) + uLightCol * max(dot(n, uLightDir), 0.) * sh; }
 float fogF(vec3 wp) { float d = length(wp - uCam); return clamp(1. - exp(-d * d * uFogDen * uFogDen), 0., 1.); }
@@ -79,8 +119,14 @@ void main() {
   float n1 = vnoise(vW.xz * .07), n2 = vnoise(vW.xz * .9), n3 = vnoise(vW.xz * 3.1);
   vec3 emi = vec3(0.);
   float spec = 0.;
+  // Older districts: more cracks, sunken and broken flags, weeds and stains (see ageAt).
+  float age = ageAt(vW.xz), close = 1. - smoothstep(70., 140., length(vW - uCam));
   if (vPat < .5) {
     c *= .7 + .45 * n1 + .15 * n2 + .1 * n3;
+    // Worn ground: bare earth where people cut across, sparse clover and the odd darker tuft.
+    float worn = smoothstep(.68, .8, vnoise(vW.xz * .045 + 4.) * .6 + vnoise(vW.xz * .4) * .4);
+    c = mix(c, lin(vec3(.45, .38, .27)) * (.8 + .3 * n3), worn * (.35 + .4 * age));
+    c *= 1. - .12 * step(.93, hash12(floor(vW.xz * 2.3))) * close;
   } else if (vPat < 1.5) {
     // Pavement: concrete flags with joints, each a slightly different tone, stains, gum, the odd crack.
     vec2 g = fract(vW.xz / 2.2), cell = floor(vW.xz / 2.2);
@@ -97,6 +143,15 @@ void main() {
       float d = abs(q.x * .8 + q.y * .6 - (hs - .92) * 2.) * 2.2;
       c *= 1. - .35 * (1. - smoothstep(0., .015 + fwidth(d), d)) * fa;
     }
+    // Age: a sunken flag, shaded down one side as it tips; a broken one patched with tarmac;
+    // weeds pushing up through the joints; cracks across the flags; dark oil and drink stains.
+    float hk = hash12(cell + 17.3);
+    if (hk < age * .06) c *= .82 + .2 * (g.x * .6 + g.y * .4);
+    else if (hk > 1. - age * .025) c = mix(c, lin(vec3(.2, .21, .22)) * (.85 + .3 * n3), fa);
+    float weed = line * smoothstep(.72 - .25 * age, .82 - .25 * age, vnoise(vW.xz * 1.6 + 9.)) * age;
+    c = mix(c, lin(vec3(.26, .34, .14)) * (.7 + .6 * n3), weed * fa * .9);
+    c *= 1. - .45 * cracks(vW.xz, 2.2, .03 + .35 * age * age, 3.) * close;
+    c *= 1. - .2 * smoothstep(.78 - .1 * age, .84 - .1 * age, vnoise(vW.xz * .7 + 31.)) * (.4 + age);
     spec = .25;
   } else if (vPat > 5.5 && vPat < 6.5) {
     // Kerbstones: speckled granite in 1.2 m lengths.
@@ -104,6 +159,8 @@ void main() {
     vec2 g = fract(vW.xz / 1.2);
     float joint = max(1. - smoothstep(.0, .02, g.x), 1. - smoothstep(.0, .02, g.y));
     c *= (.9 + .12 * n2) * (1. + .3 * (hash12(floor(vW.xz * 30.)) - .5) * fa) * (1. - .25 * joint);
+    // Chipped kerbs where cars have clipped them, more of them in older streets.
+    c *= 1. - .35 * step(1. - (.02 + .08 * age), hash12(floor(vW.xz / 1.2) + 5.)) * step(.55, vnoise(vW.xz * 4.)) * fa;
     spec = .35;
   } else if (vPat > 3.5 && vPat < 4.5) {
     float ca = vnoise(vW.xz * 1.3 + uTime * .6) * vnoise(vW.xz * 1.1 - uTime * .5);
@@ -115,6 +172,11 @@ void main() {
     float line = max(1. - smoothstep(.01, .025, g.x), 1. - smoothstep(.01, .025, g.y));
     float tile = step(.5, hash12(floor(vW.xz / 6.)));
     c *= (1. - .2 * line) * (.9 + .1 * tile) * (.92 + .1 * n2);
+    // Cracked slabs and a few replaced in a not-quite-matching stone.
+    c *= 1. - .45 * cracks(vW.xz, 6., .05 + .4 * age * age, 8.) * close;
+    float rt = hash12(floor(vW.xz / 6.) + 41.);
+    c *= rt < age * .08 ? .86 : 1.;
+    c *= 1. - .15 * smoothstep(.75, .85, vnoise(vW.xz * .5 + 13.)) * age;
     spec = .4;
   }
   // Pale paving reads as glare under a strong sun; real stone and concrete reflect far less.
@@ -177,10 +239,29 @@ void main() {
   float cn = vnoise(vW.xz * .55 + 3.1) * .65 + vnoise(vW.xz * 2.3) * .35;
   float crack = (1. - smoothstep(0., fwidth(cn) * 1.3 + .003, abs(cn - .5))) * smoothstep(.55, .75, vnoise(vW.xz * .07 + 7.)) * clamp(1. - 3. * fwidth(vW.x), 0., 1.);
   float gloss = 0.;
+  float age = ageAt(vW.xz), close = 1. - smoothstep(80., 160., length(vW - uCam)), hole = 0.;
   if (ty < 8.5) {
+    // Old asphalt: crazed into small slabs where it's tired (fatigue cracking), and more cracks.
+    float tired = smoothstep(mix(.97, .74, age), mix(1., .8, age), vnoise(vW.xz * .11 + 17.));
+    vec2 aj = vW.xz * 3.2 + vec2(vnoise(vW.xz * 7.), vnoise(vW.xz * 7. + 5.)) * .35;
+    vec2 aq = fract(aj);
+    float afw = max(fwidth(aj.x), fwidth(aj.y));
+    float craze = (1. - smoothstep(0., afw * 1.2 + .03, min(min(aq.x, 1. - aq.x), min(aq.y, 1. - aq.y)))) * tired * clamp(1. - 3. * afw, 0., 1.) * .7;
+    crack = max(crack, max(craze, cracks(vW.xz, 3.5, .04 + .3 * age * age, 4.) * close));
+    // Potholes in the lanes of older roads: a dark broken hollow with a ragged rim, holding water.
+    vec2 hc = floor(vW.xz / 9.), hq = fract(vW.xz / 9.) - .5;
+    float hh = hash12(hc + 91.);
+    if (hh < age * age * .06 && au < hw - 1.) {
+      vec2 hp = (hq - (vec2(hash12(hc + 1.7), hash12(hc + 2.9)) - .5) * .5) * 9.;
+      float r = length(hp * vec2(1., .8)) + (vnoise(hp * 3. + hh * 50.) - .5) * .25;
+      float R0 = .3 + .45 * fract(hh * 37.);
+      hole = 1. - smoothstep(R0 - .05, R0, r);
+      float rim = (1. - smoothstep(R0, R0 + .18, r)) * (1. - hole);
+      c = mix(c * (1. + .15 * rim), lin(vec3(.12, .12, .12)) * (.7 + .5 * vnoise(hp * 9.)), hole);
+    }
     vec2 pc = vec2(floor((u + hw) / 3.), floor(v / 11.));
     float ph = hash12(pc + hw * 1.7 + ty);
-    if (ph > .86) {
+    if (ph > .86 - .12 * age) {
       vec2 pf = vec2(fract((u + hw) / 3.), fract(v / 11.));
       vec2 lo = vec2(.1 + .3 * hash12(pc + 1.), .1 + .4 * hash12(pc + 2.)), hi = lo + vec2(.5, .3);
       float inP = step(lo.x, pf.x) * step(pf.x, hi.x) * step(lo.y, pf.y) * step(pf.y, hi.y);
@@ -227,7 +308,8 @@ void main() {
     }
   }
   c *= 1. - .5 * crack;
-  float wear = (.65 + .35 * vnoise(vW.xz * .45)) * (1. - crack);
+  // Markings wear thin and patchy with age, and are gone where the surface has broken up.
+  float wear = (.65 + .35 * vnoise(vW.xz * .45)) * (1. - crack) * mix(1., .35 + .65 * smoothstep(.3, .7, vnoise(vW.xz * 1.1 + 2.)), age) * (1. - hole);
   c = mix(c, white, mw * wear);
   c = mix(c, gold, mg * wear);
   vec3 n = vec3(0., 1., 0.);
@@ -235,7 +317,7 @@ void main() {
   vec3 col = c * (light(n, sh) + lamps(vW, n));
   // Wet asphalt: puddles reflect the sky and the sun or moon.
   vec3 V = normalize(vW - uCam);
-  float puddle = smoothstep(.45, .7, vnoise(vW.xz * .09) * .7 + vnoise(vW.xz * .5) * .3) * (1. - mw) ;
+  float puddle = max(smoothstep(.45, .7, vnoise(vW.xz * .09) * .7 + vnoise(vW.xz * .5) * .3) * (1. - mw), hole);
   float wet = clamp(uWet * (.55 + .45 * puddle) + tyre * uWet * .3, 0., 1.);
   float fres = .03 + .97 * pow(1. - abs(V.y), 5.);
   vec3 R = reflect(V, n);
@@ -310,11 +392,41 @@ vec3 room(vec2 cell, float cw, float fh, vec3 V, vec3 n, vec3 t, float h, out fl
   return c;
 }
 
+// A spray-painted tag at street level, in a few bays of older walls: a run of cursive scrawl in one
+// bright colour, outlined dark, with a flourish under it. m is metres along the face and up from
+// the ground. Returns how much paint covers this point; the colour comes out in tc.
+const vec3 TAGC[5] = vec3[5](vec3(.85, .2, .5), vec3(.15, .55, .9), vec3(.95, .75, .1), vec3(.1, .1, .1), vec3(.3, .8, .35));
+float tag(vec2 m, float seed, float age, out vec3 tc) {
+  float bx = floor(m.x / 5.), h = hash12(vec2(bx, seed * 3.3));
+  tc = vec3(0.);
+  if (h > age * age * .3 || m.y > 2.6 || m.y < .2) return 0.;
+  float L = 1.2 + 1.4 * fract(h * 3.);
+  vec2 c = vec2((bx + .5) * 5. + (fract(h * 11.) - .5) * (4.4 - L), 1.1 + .5 * fract(h * 7.));
+  vec2 q = m - c;
+  if (abs(q.x) > L * .5 + .1 || abs(q.y) > .45) return 0.;
+  // The scrawl: a baseline that wobbles like handwriting, with letter-sized loops riding on it.
+  float k = 9. + 5. * fract(h * 5.), x = q.x * k;
+  float y = .16 * sin(x + h * 20.) + .07 * sin(x * 2.3 + h * 7.) + .03 * sin(x * 5.1);
+  float d = abs(q.y - y);
+  float ink = 1. - smoothstep(.022, .032, d);
+  float edge = (1. - smoothstep(.034, .048, d)) * (1. - ink);
+  // A flourish underneath, a little shorter.
+  float u = abs(q.y + .3 - .05 * sin(q.x * 3. + h * 9.)) ;
+  float under = (1. - smoothstep(.012, .02, u)) * step(abs(q.x), L * .42);
+  float fade = 1. - smoothstep(L * .42, L * .5, abs(q.x));
+  tc = mix(lin(vec3(.06)), lin(TAGC[int(fract(h * 19.) * 4.99)]), ink + under * (1. - ink));
+  return max(max(ink, edge), under) * fade * (.75 + .25 * vnoise(m * 9.));
+}
+
 void main() {
   vec3 n = normalize(vN);
   float st = vB.x, top = vB.z;
   float neonI = floor(vB.y) - 1., seed = fract(vB.y);
-  vec3 base = vCol;
+  // How old this building is: its district's age, give or take, and glass towers wear least.
+  // Older paint has faded towards grey. Wear is drawn only near enough to see it.
+  float age = clamp(ageAt(vW.xz) + (fract(seed * 7.13) - .5) * .4, 0., 1.) * (st == 0. || st == 7. ? .35 : 1.);
+  vec3 base = mix(vCol, vec3(dot(vCol, vec3(.3, .55, .15))), age * .22) * (1. - age * .06);
+  float close = 1. - smoothstep(90., 170., length(vW - uCam));
   float nz = vnoise(vW.xz * .23 + vW.y * .17);
   float sh = shadowAt(vW, n);
   vec3 lc = light(n, sh) + lamps(vW, n);
@@ -330,11 +442,26 @@ void main() {
       float rf = fract(row), tile = hash12(vec2(floor(along + .5 * mod(floor(row), 2.)), floor(row)) + seed * 3.);
       col *= mix(1., (.8 + .3 * tile) * mix(.72, 1.05, smoothstep(0., .35, rf)), fa);
       col *= 1. - .12 * smoothstep(.55, .85, vnoise(vW.xz * .4 + seed * 9.));
+      // Old roofs: the odd slipped or missing tile showing the dark felt, and moss in the courses.
+      float tk = hash12(vec2(floor(along + .5 * mod(floor(row), 2.)), floor(row)) + seed * 17.);
+      col *= 1. - .6 * step(tk, age * age * .05) * fa * close;
+      float moss = smoothstep(.55, .8, vnoise(vW.xz * .5 + seed * 21.)) * age * age * (1. - smoothstep(.15, .5, rf));
+      col *= mix(vec3(1.), vec3(.6, .74, .42), moss * .8);
     } else {
       // Flat roofs: membrane strips with seams, and some ponding stains.
       float seam = 1. - smoothstep(0., .03 + fwidth(vW.x), abs(fract(vW.x / 1.2) - .5) * 1.2 - .57);
       col *= mix(1., (1. - .2 * seam) * (.9 + .15 * hash12(vec2(floor(vW.x / 1.2), seed))), fa);
-      col *= 1. - .18 * smoothstep(.6, .85, vnoise(vW.xz * .15 + seed * 5.));
+      col *= 1. - (.18 + .14 * age) * smoothstep(.6 - .12 * age, .85, vnoise(vW.xz * .15 + seed * 5.));
+      // Patched repairs on older roofs: squares of newer, darker membrane with a lapped edge.
+      vec2 rc = floor(vW.xz / 5.), rp = fract(vW.xz / 5.);
+      float rh = hash12(rc + seed * 13.);
+      if (rh < age * .25) {
+        vec2 lo = vec2(.1, .15) + .3 * vec2(hash12(rc + 1.), hash12(rc + 2.)), hi = lo + vec2(.35, .3);
+        float inR = step(lo.x, rp.x) * step(rp.x, hi.x) * step(lo.y, rp.y) * step(rp.y, hi.y);
+        float lap = inR * (1. - smoothstep(0., .02, min(min(rp.x - lo.x, hi.x - rp.x), min(rp.y - lo.y, hi.y - rp.y))));
+        col *= mix(1., .72, inR * fa) * (1. + .25 * lap * fa);
+      }
+      col *= 1. - .4 * cracks(vW.xz, 3.5, .1 * age, seed * 5.) * close;
     }
     if (st > 9.5 && st < 10.5) emi = base * (1. + uNight * 2.);
   } else if (n.y < -.5) {
@@ -400,6 +527,39 @@ void main() {
       wall *= .9 + .18 * vnoise(m * vec2(.07, .045) + seed * 50.);
       wall *= 1. - .16 * smoothstep(top - 5., top - .3, uv.y) * smoothstep(.35, .75, vnoise(vec2(m.x * .9, uv.y * .04) + seed * 3.));
     }
+    // Wear that comes with age, sparse and patchy (none on the curtain walls, which get cleaned):
+    // hairline cracks, render fallen away from the block or brick behind, rust and damp running
+    // down from fixings, damp and moss rising at the foot of the wall, and the odd tag.
+    vec3 tagC = vec3(0.);
+    float tagA = 0.;
+    if (close > 0. && st != 0. && st != 7.) {
+      wall *= .95 + .1 * vnoise(m * 7. + seed * 3.) * close;
+      wall *= 1. - .5 * cracks(m, 2.4, .04 + .3 * age * age, seed * 31.) * close;
+      // Mostly low down, where knocks and rising damp get it, and rarely up high.
+      float sp = (vnoise(m * .32 + seed * 77.) * .65 + vnoise(m * 1.7 + seed * 13.) * .25 + vnoise(m * 6. + seed) * .1) * mix(1., .9, smoothstep(2., 8., m.y));
+      float th = mix(.97, .8, age);
+      float spall = smoothstep(th, th + .012, sp) * close, rim = smoothstep(th - .025, th, sp) * (1. - spall) * close;
+      vec2 bq2 = vec2(m.x / .36 + .5 * mod(floor(m.y / .15), 2.), m.y / .15), bk = floor(bq2), bf2 = fract(bq2);
+      float mortar = max(step(bf2.x, .07), step(bf2.y, .14));
+      // Metal cladding rusts through instead; render comes away from brick, or from grey blockwork.
+      bool metal = st == 4. || st == 5.;
+      vec3 brick = mix(lin(vec3(.62, .42, .34)) * (.85 + .25 * hash12(bk + seed)), lin(vec3(.7, .67, .6)), mortar);
+      vec3 block = lin(vec3(.55, .54, .5)) * (.9 + .15 * hash12(floor(vec2(m.x / .45, m.y / .225)) + seed)) * (1. - .2 * max(step(fract(m.x / .45), .04), step(fract(m.y / .225), .08)));
+      vec3 under = metal ? lin(vec3(.5, .29, .16)) * (.75 + .4 * vnoise(m * 5. + seed)) : seed > .5 ? brick : block;
+      wall = mix(wall, under, spall * (metal ? .85 : 1.));
+      wall *= 1. + (metal ? -.12 : .18) * rim;
+      float sx = floor(m.x / 3.7), sh2 = hash12(vec2(sx, seed * 9.1));
+      if (sh2 < .06 + .4 * age) {
+        float x0 = (sx + .2 + .6 * fract(sh2 * 17.)) * 3.7, y0 = top * (.25 + .7 * fract(sh2 * 29.));
+        float wd = .06 + .22 * fract(sh2 * 41.), dy = y0 - m.y;
+        float run = (1. - smoothstep(wd * .4, wd, abs(m.x - x0 + (vnoise(vec2(m.y * .7, sx)) - .5) * .25))) * step(0., dy) * smoothstep(3. + 7. * age, 0., dy);
+        wall *= mix(vec3(1.), fract(sh2 * 53.) > .5 ? vec3(.8, .6, .44) : vec3(.7, .73, .7), run * (.35 + .4 * age));
+      }
+      float foot = (1. - smoothstep(.15, .7 + 1.3 * age, m.y)) * smoothstep(.4, .7, vnoise(m * vec2(.5, 1.6) + seed * 4.));
+      wall *= mix(vec3(1.), vec3(.6, .68, .48), foot * age * .85);
+      tagA = tag(m, seed, age, tagC) * close;
+      wall = mix(wall, tagC, tagA);
+    }
     // Windows sit back in the wall: the view ray through the opening meets the glass further
     // in, so you see the reveals at an angle, a lit sill below and the lintel's shadow on the glass.
     float recess = st == 0. || st == 7. ? 0. : st == 3. || st == 8. ? .16 : .24;
@@ -419,7 +579,11 @@ void main() {
     float underSill = recess > 0. && wr.y > wr.x ? step(wm.z - .2, pm.y) * step(pm.y, wm.z - .08) * step(wm.x - .07, pm.x) * step(pm.x, wm.y + .07) : 0.;
     float aa = clamp(1. - 1.5 * max(fwidth(uv.x), fwidth(fy)), 0., 1.);
     float h = hash12(vec2(cx, fl) + seed * 91.7);
-    float lit = step(1. - litP, h);
+    // In older buildings the odd window is boarded up (nobody home), or has a cracked pane.
+    float hw2 = hash12(vec2(cx * 1.7, fl * 2.3) + seed * 61.);
+    float boarded = (st == 1. || st == 2. || st == 3. || st == 4. || st == 8.) && wr.y > wr.x && hw2 < age * age * .07 ? 1. : 0.;
+    float broken = st != 0. && st != 7. && wr.y > wr.x && boarded < .5 && hw2 > 1. - age * .05 ? 1. : 0.;
+    float lit = step(1. - litP, h) * (1. - boarded);
     vec3 lcol = mix(vec3(1., .72, .4), vec3(.7, .85, 1.), step(.62, hash12(vec2(fl, cx) + seed * 13.1)));
     if (hash12(vec2(cx * 3., fl) + seed) > .97) lcol = vec3(1., .4, .15);
     // Interior seen through the glass.
@@ -460,6 +624,25 @@ void main() {
       wallC = base * .1 * lc + refl * (.3 + .45 * fres) + uLightCol * sunSpec * 2.;
       wallC *= 1. - .6 * step(fyF, .025);
     }
+    if (broken > .5) {
+      // Rays out from the impact and a ring round it; a dark hole where the glass has gone.
+      vec2 bq = (cell - vec2(.3 + .4 * fract(h * 5.), .3 + .4 * fract(h * 9.))) * vec2(cw * (wr.y - wr.x), fh * (wr.w - wr.z));
+      float br = length(bq), ba = atan(bq.y, bq.x) / 6.2832 * 11. + h * 7.;
+      float rays = (1. - smoothstep(0., .03, abs(fract(ba) - .5) * br * 1.2)) * (1. - smoothstep(.25, .8, br));
+      float ring = 1. - smoothstep(0., .02, abs(br - .16 - .05 * fract(h * 3.)));
+      float hole = step(br, .05 + .05 * fract(h * 13.));
+      glass = mix(glass, vec3(.75, .78, .8) * lc * .6 + refl * .4, max(rays, ring * .7) * .7);
+      glass = mix(glass, vec3(.01), hole);
+    }
+    if (boarded > .5) {
+      // Plywood over the opening, in sheets with screw rows, weathered grey at the edges.
+      vec2 bp = gp - wm.xz;
+      float sheet = step(.5, fract(bp.x / 1.22)), grain = vnoise(vec2(bp.x * 2., bp.y * 30.) + h * 9.);
+      vec3 ply = lin(mix(vec3(.62, .5, .35), vec3(.55, .53, .5), .5 * age + .3 * sheet)) * (.82 + .2 * grain);
+      ply *= 1. - .35 * step(abs(fract(bp.x / 1.22) - .5), .008) * step(fract(bp.y / .6), .06);
+      glass = ply * lc;
+      frame = 0.;
+    }
     vec3 near = mix(wallC, glass, onGlass);
     near = mix(near, frameC, frame);
     near = mix(near, revealC, reveal);
@@ -474,7 +657,7 @@ void main() {
       near *= 1. - .35 * step(0., ap.x) * step(ap.x, .62) * step(-.7, ap.y) * step(ap.y, 0.) * smoothstep(-.7, 0., ap.y);
       onGlass *= 1. - inU;
     }
-    vec3 nearE = insideLit * onGlass * (1. - frame) * (1. - glassRefl * .5) * uNight;
+    vec3 nearE = insideLit * onGlass * (1. - frame) * (1. - glassRefl * .5) * uNight * (1. - boarded);
     vec3 far = mix(wallC, mix(vec3(.02), refl, glassRefl * .8), avg);
     vec3 farE = lcol * avg * litP * 1.4 * uNight;
 
@@ -507,6 +690,14 @@ void main() {
       sn = mix(sn, fcol * lc, fascia);
       sn = mix(sn, vec3(.95, .92, .85) * lc, letter);
       sn = mix(sn, granite * lc * .8, step(uv.y, .45) * (1. - inGlass));
+      sn = mix(sn, tagC * lc, tagA * (1. - inGlass) * (1. - fascia));
+      // Shutters pulled down over the odd shop that's closed down, rusted in the oldest streets.
+      if (hs < age * age * .12 && !tower) {
+        float slat = .7 + .3 * step(.5, fract(uv.y * 9.));
+        vec3 shut = lin(mix(vec3(.6, .62, .62), vec3(.55, .42, .32), age)) * slat * (.85 + .2 * vnoise(m * vec2(.8, 3.) + hs * 9.));
+        sn = mix(sn, shut * lc, inGlass);
+        inGlass = 0.;
+      }
       float shopOn = step(.15, hs);
       vec3 snE = (src * shopL * srg * 1.1 * inGlass * (1. - sframe) * shopOn + letter * shopL * 2.) * uNight + src * shopL * srg * .35 * inGlass * (1. - sframe) * shopOn * (1. - uNight);
       near = sn; nearE = snE;
