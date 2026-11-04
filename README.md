@@ -90,7 +90,7 @@ walks on those surfaces and on roofs. `node test/climb.test.js` walks fire escap
 ## Money, shops, weapons and homes
 
 You start with $2,500. Ninety envelopes of unclaimed expenses lie on the pavements (more out in the hills
-and the park); the story missions will be the main income. Everything you own is saved in the browser.
+and the park); the story missions will be the main income. Everything you own is saved in the browser, along with where you are: the game saves every 10 seconds, when you pause, and when you switch away from or close the tab. Each save records whether you're on foot or driving, which car and how damaged it is, the time of day and the way you're facing (in a shop or a home, the street door). Next time, the title screen offers "Play · where you left off" and builds the city round that spot before you start. A mission that was under way starts again from its contact, and the Audit forgets about you.
 
 | Place | How many | What it's for |
 |---|---|---|

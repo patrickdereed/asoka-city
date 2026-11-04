@@ -341,6 +341,7 @@ function collectDrops(at, r) {
 function showTitle() {
   state = "title";
   const home = save.home && world.venues.find((v) => v.id === save.home);
+  const resume = !startedOnce && prefs.character && save.where;
   ui.innerHTML = `
     <div class="title">
       <div class="title-card">
@@ -349,11 +350,11 @@ function showTitle() {
         <h2>Asoka City</h2>
         <p class="lede">An 8 × 8 km city of towers, isles, docks and hills. Walk into the shops, arm yourself at
         Breakpoint Arms, buy a home. The story and the Audit patrols come next.</p>
-        <button class="btn primary" id="t-start">${prefs.character ? `Play as ${esc(prefs.character.name)}${home ? ` · from your ${esc(home.name)}` : ""}` : "Create your character"}</button>
+        <button class="btn primary" id="t-start">${prefs.character ? `Play as ${esc(prefs.character.name)}${resume ? " · where you left off" : home ? ` · from your ${esc(home.name)}` : ""}` : "Create your character"}</button>
         ${prefs.character ? '<button class="btn" id="t-char">Change your character</button>' : ""}
         <div class="title-row">
           <label>Detail <select id="t-q">${Object.keys(QUALITY).map((k) => `<option ${k === prefs.quality ? "selected" : ""}>${k}</option>`).join("")}</select></label>
-          <label>Start at <select id="t-time"><option value="18">Golden hour</option><option value="21.5">Night</option><option value="6.4">Sunrise</option><option value="12">Midday</option></select></label>
+          <label>Start at <select id="t-time">${resume ? '<option value="resume" selected>Where you left off</option>' : ""}<option value="18">Golden hour</option><option value="21.5">Night</option><option value="6.4">Sunrise</option><option value="12">Midday</option></select></label>
         </div>
         <ul class="keys">
           <li><kbd>W</kbd><kbd>S</kbd> drive / walk</li><li><kbd>A</kbd><kbd>D</kbd> steer / sidestep</li><li><kbd>F</kbd> get out / in</li>
@@ -366,14 +367,17 @@ function showTitle() {
   ui.classList.remove("hidden");
   $("t-q").onchange = (e) => { prefs.quality = e.target.value; savePrefs(); applyQuality(); };
   if ($("t-char")) $("t-char").onclick = () => showCreator();
-  $("t-start").onclick = () => {
+  $("t-start").onclick = async () => {
     if (!prefs.character) { showCreator(); return; }
-    hour = parseFloat($("t-time").value);
+    const t = $("t-time").value, back = resume && t === "resume";
+    hour = back ? save.where.hour : parseFloat(t);
     audio.start();
     ui.classList.add("hidden");
+    if (back) await streamAround(save.where.foot && save.where.at ? save.where.at : save.where.car);
     $("hud").classList.remove("hidden");
     state = "play";
-    if (home && !startedOnce) startAtHome(home);
+    if (back && !startedOnce) resumeWhere(save.where);
+    else if (home && !startedOnce) startAtHome(home);
     else if (!startedOnce) hud.toast(`Welcome to Asoka City. You have ${fmtMoney(save.money)}: gun stores, shops and homes are on the map (M).`, 7);
     startedOnce = true;
   };
@@ -388,6 +392,61 @@ function startAtHome(v) {
   me.holder.visible = true;
   camYaw = v.yawOut;
   hud.toast(`Back at your ${v.name}. Your car is parked on the street.`, 5);
+}
+
+// Build the blocks round a spot before play starts there, behind the loading card, as boot does.
+let streamTo = null;   // while set, the city streams round here, not round the camera
+async function streamAround(p) {
+  if (!p || !isFinite(p.x) || !isFinite(p.z)) return;
+  streamTo = { x: p.x, z: p.z };
+  loading.classList.remove("hidden");
+  let pending = 1, guard = 0;
+  while (pending > 0 && guard++ < 200) {
+    pending = city.update({ x: p.x, z: p.z }, 40);
+    setLoading(`Back to where you left off · ${pending} to go`);
+    await frame();
+  }
+  streamTo = null;
+  loading.classList.add("hidden");
+}
+
+// Where you are, kept with the save so the next session starts there: on foot or driving, which
+// car and how knocked about it is, the time of day and the way you face. In a shop or a home it's
+// the street door; mid-jump, mid-jack or knocked out, the last good spot stands.
+function snapshot() {
+  if ((state !== "play" && state !== "pause") || jack || deadT > 0 || save.hp <= 0) return;
+  const v = inside && inside.v, foot = mode === "foot" || !!v;
+  if (foot && !v && walker.vy < -0.5) return;
+  const prev = save.where || {};
+  const car = player.inWater > 0 ? prev.car : { x: player.x, z: player.z, yaw: player.yaw, k: carNow.k, color: carNow.color, livery: carNow.livery, hp: player.hp0 ? player.hp / player.hp0 : 1 };
+  const at = v ? { x: v.x, y: null, z: v.z, yaw: v.yawOut } : foot ? { x: walker.x, y: walker.y, z: walker.z, yaw: walker.yaw } : null;
+  save.where = { foot, hour, at, car, t: Date.now() };
+}
+
+// Start the session back there. Anything that no longer makes sense (off the map, in the water) falls
+// back to the nearest road. Missions under way start again from their contact; the Audit forgets.
+function resumeWhere(w) {
+  const ok = (p) => p && isFinite(p.x) && isFinite(p.z) && Math.abs(p.x) < HALF - 60 && Math.abs(p.z) < HALF - 60;
+  const toRoad = (x, z) => { const r = world.nearestRoad(x, z); return r ? world.edgePoint(r.e, r.s, r.e.laneOff[0]) : null; };
+  const c = w.car;
+  if (ok(c)) {
+    if (c.k != null && c.k >= 0 && kits[c.k] && c.k !== carNow.k) setPlayerCar(c.k, c.color, c.livery);
+    player.place(c.x, c.z, c.yaw);
+    if (!world.onDeck && player.y < 0.25) { const p = toRoad(c.x, c.z); if (p) player.place(p.x, p.z, Math.atan2(-p.tx, -p.tz)); }
+    if (c.hp != null && player.hp0) player.hp = player.hp0 * clamp(c.hp, 0.05, 1);
+  }
+  if (w.foot && ok(w.at) && me) {
+    walker.place(w.at.x, w.at.z, w.at.yaw, w.at.y);
+    if (walker.support(walker.x, walker.z, walker.y).water) { const p = toRoad(w.at.x, w.at.z); if (p) walker.place(p.x, p.z, w.at.yaw); }
+    mode = "foot"; me.holder.visible = true;
+    camYaw = walker.yaw; camPitch = -0.12;
+    camPos.set(walker.x + Math.sin(walker.yaw) * 4, walker.y + 2, walker.z + Math.cos(walker.yaw) * 4);
+  } else {
+    mode = "drive"; if (me) me.holder.visible = false;
+    camYaw = player.yaw;
+    camPos.set(player.x + Math.sin(player.yaw) * 7, player.y + 2.5, player.z + Math.cos(player.yaw) * 7);
+  }
+  hud.toast("Back where you left off.", 4);
 }
 
 // Every control, for the pause menu and the in-game list (? key): keyboard and mouse, gamepad, what it does.
@@ -438,6 +497,7 @@ function showControls() {
 function showPause() {
   state = "pause";
   releaseMouse();
+  saveNow();
   ui.innerHTML = `
     <div class="title"><div class="title-card small">
       ${LOGO}<h2>Paused</h2>
@@ -979,7 +1039,10 @@ function damageCar(dmg) {
 
 // ---------------------------------------------------------------------------- money and health
 
-function saveNow() { prefs.save = save; savePrefs(); }
+function saveNow() { snapshot(); prefs.save = save; savePrefs(); }
+// Leaving the page (closing the tab, switching away, the Salesforce tab navigating off) saves too.
+addEventListener("pagehide", () => saveNow());
+document.addEventListener("visibilitychange", () => { if (document.hidden) saveNow(); });
 function spend(n) { if (save.money < n) return false; save.money -= n; return true; }
 function earn(n) { save.money += n; audio.cash(true); }
 function heal(n) { save.hp = Math.min(100, save.hp + n); }
@@ -1374,7 +1437,7 @@ function tick(dt) {
     weapon: onFoot && !inside ? { name: w.name, kind: w.kind, mag: w.mag ? st.mag : null, ammo: w.mag ? st.ammo : null, reloading: arsenal.reloadT > 0 } : null,
   });
   saveT += dt;
-  if (saveT > 15) { saveT = 0; saveNow(); }
+  if (saveT > 10) { saveT = 0; saveNow(); }
 }
 
 function collectCash(at, r) {
@@ -1662,7 +1725,7 @@ function render(dt) {
   }
   sky.position.copy(camera.position);
   sea.position.set(camera.position.x, 0, camera.position.z);
-  city.update(state === "title" ? { x: TOWER.x, z: TOWER.z } : state === "creator" ? CREATOR_SPOT : camera.position, 5);
+  city.update(streamTo || (state === "title" ? { x: TOWER.x, z: TOWER.z } : state === "creator" ? CREATOR_SPOT : camera.position), 5);
   const night = U.uNight.value;
 
   // Player car
