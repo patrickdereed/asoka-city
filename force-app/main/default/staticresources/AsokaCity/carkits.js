@@ -94,9 +94,12 @@ function bake(id, gltf) {
       }
     }
   });
-  // Wheels at the measured axles: tyre, rim and a darker hub face.
+  // Wheels at the measured axles (the models' own aren't used). The axle is along x. A tyre tread
+  // and both sidewalls; on each face a bright rim lip round a darker dish set back into the wheel,
+  // five spokes running out from the hub to the lip, and a hub cap.
   const wr = rl.wheelR || 0.32, ww = rl.wheelW || 0.23;
-  const tyre = [0.09, 0.09, 0.1], rim = [0.72, 0.74, 0.75];
+  const tyre = [0.09, 0.09, 0.1], sidewall = [0.12, 0.12, 0.13], lip = [0.78, 0.8, 0.81];
+  const dish = [0.2, 0.21, 0.22], spoke = [0.64, 0.66, 0.68], hub = [0.48, 0.5, 0.52];
   const wheels = [];
   for (const k of ["FL", "FR", "RL", "RR"]) {
     const w = rl.wheels && rl.wheels[k];
@@ -105,13 +108,34 @@ function bake(id, gltf) {
   }
   const wheelGeo = new Geo({ cdata: 2, luv: 2 });
   wheelGeo.e.cdata = [0, 0];
-  wheelGeo.tube([-ww / 2, 0, 0], [ww / 2, 0, 0], wr, wr, tyre, 14);
-  for (const s of [-1, 1]) {
-    wheelGeo.tube([(s * ww) / 2, 0, 0], [(s * (ww + 0.01)) / 2, 0, 0], wr * 0.68, wr * 0.68, rim, 10);
-    for (let k = 0; k < 5; k++) {
-      const a = (k / 5) * Math.PI * 2;
-      wheelGeo.box((s * (ww + 0.016)) / 2, Math.cos(a) * wr * 0.34, Math.sin(a) * wr * 0.34, 0.02, wr * 0.55, 0.07, [0.45, 0.47, 0.48], 0, 0, 0, 0);
+  const NS = 18, at = (x, r, a) => [x, Math.cos(a) * r, Math.sin(a) * r];
+  // A flat ring on the wheel face at x, from radius r0 to r1, facing s (+1 or -1 along x).
+  const ring = (x, r0, r1, col, s) => {
+    for (let i = 0; i < NS; i++) {
+      const a0 = (i / NS) * Math.PI * 2, a1 = ((i + 1) / NS) * Math.PI * 2;
+      wheelGeo.quad(at(x, r0, a0), at(x, r1, a0), at(x, r1, a1), at(x, r0, a1), col, null, [s, 0, 0]);
     }
+  };
+  for (let i = 0; i < NS; i++) {
+    const a0 = (i / NS) * Math.PI * 2, a1 = ((i + 1) / NS) * Math.PI * 2, am = (a0 + a1) / 2;
+    wheelGeo.quad(at(-ww / 2, wr, a0), at(ww / 2, wr, a0), at(ww / 2, wr, a1), at(-ww / 2, wr, a1), tyre, null, [0, Math.cos(am), Math.sin(am)]);
+  }
+  for (const s of [-1, 1]) {
+    const x = (s * ww) / 2;
+    ring(x, wr * 0.7, wr, sidewall, s);
+    ring(x + s * 0.004, wr * 0.62, wr * 0.7, lip, s);
+    ring(x - s * 0.012, 0.001, wr * 0.62, dish, s);
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2 + 0.3;
+      const d = [Math.cos(a), Math.sin(a)], t = [-Math.sin(a), Math.cos(a)];
+      const r0 = wr * 0.15, r1 = wr * 0.63, h0 = wr * 0.08, h1 = wr * 0.05;
+      const pt = (xx, r, h) => [xx, d[0] * r + t[0] * h, d[1] * r + t[1] * h];
+      const xf = x + s * 0.006, xb = x - s * 0.012;
+      wheelGeo.quad(pt(xf, r0, -h0), pt(xf, r1, -h1), pt(xf, r1, h1), pt(xf, r0, h0), spoke, null, [s, 0, 0]);
+      wheelGeo.quad(pt(xb, r0, h0), pt(xb, r1, h1), pt(xf, r1, h1), pt(xf, r0, h0), spoke.map((c) => c * 0.8), null, [0, t[0], t[1]]);
+      wheelGeo.quad(pt(xb, r0, -h0), pt(xb, r1, -h1), pt(xf, r1, -h1), pt(xf, r0, -h0), spoke.map((c) => c * 0.8), null, [0, -t[0], -t[1]]);
+    }
+    ring(x + s * 0.01, 0.001, wr * 0.17, hub, s);
   }
   const body = g.build();
   const wheelOnly = wheelGeo.build();
