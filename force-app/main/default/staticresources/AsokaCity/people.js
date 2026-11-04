@@ -383,7 +383,7 @@ export class Crowd {
   knock(p, fx, fz, out) {
     p.downT = 0.001; p.fallYaw = Math.atan2(p.x - fx, p.z - fz); p.out = out; p.from = [fx, fz];
     p.upAt = out ? Infinity : 1.5 + this.r() * 1.5;
-    p.flee = 0; p.person.dive = 0;
+    p.flee = 0; p.person.dive = 0; p.detour = null;
     if (out) {
       if (this.onDown) this.onDown(p);
       this.drop(p);
@@ -480,6 +480,10 @@ export class Crowd {
       } else if (p.actor) {
         // actors.js moved them already this frame.
         speed = p.aSpeed || 0; run = p.aRun || 0;
+      } else if (!p.standing && p.detour) {
+        speed = p.panic > 0 ? 4.3 : p.speed; run = p.panic > 0 ? 1 : 0;
+        if (p.panic > 0) p.panic -= dt;
+        this.walkDetour(p, speed, dt);
       } else if (!p.standing) {
         if (p.panic > 0) { p.panic -= dt; speed = 4.3; run = 1; } else speed = p.speed;
         p.s += speed * dt * p.dir;
@@ -517,6 +521,9 @@ export class Crowd {
           if (p.downT) continue;
         }
       }
+      // After the hit test, which needs the overlap: then out of any car they're inside.
+      this.solidCars(p, dt);
+      this.solid(p);
       p.y = lerp(p.y, this.w.height(p.x, p.z) + 0.15, Math.min(1, dt * 8));
       p.person.holder.position.set(p.x, p.y, p.z);
       p.person.holder.rotation.y = p.yaw;
@@ -546,6 +553,66 @@ export class Crowd {
         }
       }
     }
+  }
+
+  // Cars are solid too, parked or moving: anyone who walks into one, or that one rolls into, is
+  // pushed back out and steps along it to get round. this.cars is set by the game each frame.
+  solidCars(p, dt) {
+    for (const c of this.cars || []) {
+      if (c.gone || c.hidden || c.taken) continue;
+      const dx = p.x - c.x, dz = p.z - c.z;
+      if (Math.abs(dx) > c.hl + 1 || Math.abs(dz) > c.hl + 1 || Math.abs(p.y - (c.y || 0)) > 1.6) continue;
+      const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw), rx = -fz, rz = fx;
+      const lf = dx * fx + dz * fz, lr = dx * rx + dz * rz;
+      const ex = lf - clamp(lf, -c.hl, c.hl), ez = lr - clamp(lr, -c.hw, c.hw), d = Math.hypot(ex, ez);
+      if (d >= PED_R) continue;
+      if (d > 1e-4) {
+        const k = (PED_R - d) / d;
+        p.x += (ex * fx + ez * rx) * k; p.z += (ex * fz + ez * rz) * k;
+        if (p.actor) {
+          // Mission people are steered elsewhere: just slide along it, towards the nearer end.
+          if (Math.abs(ez) > Math.abs(ex)) { const g = Math.sign(lf || 1) * 1.4 * dt; p.x += fx * g; p.z += fz * g; }
+          else { const g = Math.sign(lr || 1) * 1.4 * dt; p.x += rx * g; p.z += rz * g; }
+        } else if (!p.detour && !p.standing && !(p.flee > 0)) this.planDetour(p, c, fx, fz, rx, rz, lf, lr, Math.abs(ez) > Math.abs(ex));
+      } else if (c.hl - Math.abs(lf) < c.hw - Math.abs(lr)) {
+        const k = Math.sign(lf || 1) * (c.hl - Math.abs(lf) + PED_R);
+        p.x += fx * k; p.z += fz * k;
+      } else {
+        const k = Math.sign(lr || 1) * (c.hw - Math.abs(lr) + PED_R);
+        p.x += rx * k; p.z += rz * k;
+      }
+    }
+  }
+
+  // Walked into a car: go round it by its corners, round whichever end isn't against a wall, and
+  // if both are, turn back the way they came.
+  planDetour(p, c, fx, fz, rx, rz, lf, lr, side) {
+    const sg = Math.sign(lf || 1), sd = Math.sign(lr || 1), L = c.hl + 0.6, W = c.hw + 0.6;
+    const at = (a, b) => ({ x: c.x + fx * a + rx * b, z: c.z + fz * a + rz * b });
+    // Into its side: round an end (the nearer first) to the far side. Into an end: down a side to the other end.
+    const routes = side ? [[at(sg * L, sd * W), at(sg * L, -sd * W)], [at(-sg * L, sd * W), at(-sg * L, -sd * W)]]
+      : [[at(sg * L, sd * W), at(-sg * L, sd * W)], [at(sg * L, -sd * W), at(-sg * L, -sd * W)]];
+    const pts = routes.find((r) => r.every((q) => !this.walled(q.x, q.z)));
+    if (pts) p.detour = { pts, t: 6 };
+    else { p.dir = -p.dir; p.detour = null; }
+  }
+
+  walkDetour(p, speed, dt) {
+    const q = p.detour.pts[0], mx = q.x - p.x, mz = q.z - p.z, md = Math.hypot(mx, mz), step = (speed * 1.2 + 0.2) * dt;
+    if (md > step) { p.x += (mx / md) * step; p.z += (mz / md) * step; }
+    if (md > 0.05) p.yaw += angleWrap(Math.atan2(-mx, -mz) - p.yaw) * Math.min(1, dt * 6);
+    if (md < 0.3) p.detour.pts.shift();
+    // Round it (or given up): back on the path from here.
+    if (!p.detour.pts.length || (p.detour.t -= dt) <= 0) { p.detour = null; p.s = this.onEdge(p).s; }
+  }
+
+  // Is there a wall or prop where someone would stand at (x, z)?
+  walled(x, z) {
+    const cx = Math.floor((x + HALF) / CHUNK), cz = Math.floor((z + HALF) / CHUNK);
+    if (cx < 0 || cz < 0 || cx >= NCH || cz >= NCH) return true;
+    const c = this.w.chunk(cx, cz);
+    const i = clamp(Math.floor((x - c.x0) / 32), 0, 7), j = clamp(Math.floor((z - c.z0) / 32), 0, 7);
+    return c.grid[i + j * 8].some((o) => !o.down && (o.r != null ? Math.hypot(x - o.x, z - o.z) < o.r + PED_R : x > o.x0 - PED_R && x < o.x1 + PED_R && z > o.z0 - PED_R && z < o.z1 + PED_R));
   }
 
   // The point on the person's current road closest to where they are now.

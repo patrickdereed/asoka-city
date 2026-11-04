@@ -105,6 +105,16 @@ export class Walker {
   }
 
   collide(obstacles) {
+    this.collideWorld();
+    for (const o of obstacles) {
+      const hit = sat({ x: this.x, z: this.z, fx: 0, fz: -1, hl: R, hw: R }, o);
+      if (hit) { this.x += hit.nx * hit.depth; this.z += hit.nz * hit.depth; }
+    }
+    // Then the walls again: squeezed between a car and a wall, the wall wins, never the car.
+    this.collideWorld();
+  }
+
+  collideWorld() {
     const cx0 = Math.floor((this.x - 1 + HALF) / CHUNK), cx1 = Math.floor((this.x + 1 + HALF) / CHUNK);
     const cz0 = Math.floor((this.z - 1 + HALF) / CHUNK), cz1 = Math.floor((this.z + 1 + HALF) / CHUNK);
     for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
@@ -129,10 +139,6 @@ export class Walker {
           }
         }
       }
-    }
-    for (const o of obstacles) {
-      const hit = sat({ x: this.x, z: this.z, fx: 0, fz: -1, hl: R, hw: R }, o);
-      if (hit) { this.x += hit.nx * hit.depth; this.z += hit.nz * hit.depth; }
     }
   }
 }

@@ -4,7 +4,7 @@
 import { clamp, lerp, rng } from "./util.js";
 import { HALF, CHUNK, NCH, ROAD_LIFT } from "./map.js";
 import { CAR_TYPES, TRAFFIC_COLORS } from "./cars.js";
-import { sat } from "./vehicle.js";
+import { sat, blockCar } from "./vehicle.js";
 
 const SPEED = { 0: 11, 1: 15, 2: 13 };
 const tmp = {};
@@ -96,6 +96,7 @@ export class Traffic {
         const k = Math.max(0, 1 - 4.5 * dt / Math.max(Math.hypot(c.vx, c.vz), 0.5));
         c.vx *= k; c.vz *= k; c.r *= 1 - 3 * dt;
         c.x += c.vx * dt; c.z += c.vz * dt; c.yaw += c.r * dt;
+        this.solid(c);
         c.y = this.w.ground(c.x, c.z, c.y + 1);
         if (!this.w.onDeck) c.y += Math.max(ROAD_LIFT, this.w.paveLift(c.x, c.z));
         if (c.y < -0.5) c.y = -0.5;
@@ -178,6 +179,20 @@ export class Traffic {
     void r;
   }
 
+  // Keep a car out of buildings and props, and take away the speed it had going into them.
+  // Returns true when something stopped it.
+  solid(c) {
+    const n = blockCar(this.w, c);
+    if (!n) return false;
+    const vn = (c.vx || 0) * n.nx + (c.vz || 0) * n.nz;
+    if (vn < 0) { c.vx -= 1.2 * vn * n.nx; c.vz -= 1.2 * vn * n.nz; c.r = (c.r || 0) * 0.5; }
+    if (c.ai) {
+      const kn = c.kvx * n.nx + c.kvz * n.nz;
+      if (kn < 0) { c.kvx -= kn * n.nx; c.kvz -= kn * n.nz; }
+    }
+    return true;
+  }
+
   // Player against traffic: push apart, exchange momentum, and turn the other car into a wreck.
   collidePlayer(p) {
     for (const c of this.cars) {
@@ -189,6 +204,11 @@ export class Traffic {
       const pushed = { nx: hit.nx, nz: hit.nz, depth: hit.depth * (1 - share) };
       const J = p.resolve(pushed, 0.25, "car", c);
       c.x -= hit.nx * hit.depth * share; c.z -= hit.nz * hit.depth * share;
+      // Shoved into a wall, it goes no further: the wall stops it, and the player's car with it.
+      if (this.solid(c)) {
+        const back = sat(p.obb(), { x: c.x, z: c.z, fx: -Math.sin(c.yaw), fz: -Math.cos(c.yaw), hl: c.hl, hw: c.hw });
+        if (back) p.resolve(back, 0.15, "car", c);
+      }
       // A mission car takes the knock and the damage, and keeps going if it can.
       if (c.ai) {
         if (J) { c.kvx = (c.kvx || 0) - (J * hit.nx) / c.m; c.kvz = (c.kvz || 0) - (J * hit.nz) / c.m; if (this.onRam) this.onRam(c, J / c.m); }
@@ -212,6 +232,7 @@ export class Traffic {
         if (!hit) continue;
         a.x += hit.nx * hit.depth / 2; a.z += hit.nz * hit.depth / 2;
         b.x -= hit.nx * hit.depth / 2; b.z -= hit.nz * hit.depth / 2;
+        this.solid(a); this.solid(b);
         const vn = (a.vx - b.vx) * hit.nx + (a.vz - b.vz) * hit.nz;
         if (vn < 0) {
           const j = -vn * 0.6;

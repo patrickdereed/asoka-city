@@ -7,7 +7,7 @@ import * as THREE from "./three.module.min.js";
 import { Person, PEOPLE } from "./people.js";
 import { Arsenal } from "./arsenal.js";
 import { WEAPON } from "./weapons.js";
-import { sat } from "./vehicle.js";
+import { sat, blockCar } from "./vehicle.js";
 import { Geo } from "./geo.js";
 import { ROAD_LIFT, HALF, CHUNK, NCH } from "./map.js";
 import { clamp, lerp, angleWrap, hex, rng } from "./util.js";
@@ -594,6 +594,14 @@ export class Actors {
     c.x += (fx * c.v + c.kvx) * dt; c.z += (fz * c.v + c.kvz) * dt;
     const k = Math.exp(-3 * dt);
     c.kvx *= k; c.kvz *= k;
+    // Buildings and props stop it: no driving or being shoved through them. Head-on, it loses its speed.
+    const n = blockCar(this.w, c);
+    if (n) {
+      const kn = c.kvx * n.nx + c.kvz * n.nz;
+      if (kn < 0) { c.kvx -= kn * n.nx; c.kvz -= kn * n.nz; }
+      const into = -(fx * n.nx + fz * n.nz) * Math.sign(c.v || 1);
+      if (into > 0.3) c.v *= 1 - into * 0.9;
+    }
     c.vx = fx * c.v + c.kvx; c.vz = fz * c.v + c.kvz;
     c.y = this.w.ground(c.x, c.z, c.y + 1);
     if (!this.w.onDeck) c.y += Math.max(ROAD_LIFT, this.w.paveLift(c.x, c.z));
@@ -664,6 +672,7 @@ export class Actors {
         const share = a.m / (a.m + b.m);
         a.x += hit.nx * hit.depth * (1 - share); a.z += hit.nz * hit.depth * (1 - share);
         b.x -= hit.nx * hit.depth * share; b.z -= hit.nz * hit.depth * share;
+        if (!b.ai) this.traffic.solid(b);
         const vn = (a.vx - (b.vx || 0)) * hit.nx + (a.vz - (b.vz || 0)) * hit.nz;
         if (vn < 0) {
           if (b.ai) { b.kvx -= hit.nx * vn * share; b.kvz -= hit.nz * vn * share; }

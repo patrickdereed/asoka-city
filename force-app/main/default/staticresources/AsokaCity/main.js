@@ -1341,6 +1341,7 @@ function tick(dt) {
     const actx = { me: mode === "foot" ? { x: walker.x, y: walker.y, z: walker.z } : { x: player.x, y: player.y, z: player.z }, car: player, driving: mode === "drive", speed: player.speed };
     actors.update(dt, actx);
     audit.update(dt, actx);
+    crowd.cars = inside ? [] : [...traffic.cars, player];
     crowd.update(dt, camera.position, mode === "drive" ? player : null, mode === "foot" ? walker : null);
     actors.place(dt, U.uNight.value);
     collectCash(mode === "drive" ? player : walker, mode === "drive" ? 2.6 : 1.3);
@@ -1466,16 +1467,16 @@ function updateCamera(dt) {
   } else {
     const dist = camMode === 0 ? 7.2 : 11.5, h = camMode === 0 ? 2.5 : 3.8;
     target = new THREE.Vector3(p.x - cfx * dist, p.y + h - Math.sin(carLook.pitch) * dist * 0.9, p.z - cfz * dist);
-    // Keep the camera out of buildings.
-    const steps = 10;
-    for (let i = 1; i <= steps; i++) {
-      const t = i / steps;
-      const x = lerp(p.x, target.x, t), z = lerp(p.z, target.z, t), y = lerp(p.y + 1.5, target.y, t);
-      if (insideBox(x, y, z)) { target.set(lerp(p.x, target.x, (i - 1.5) / steps), target.y, lerp(p.z, target.z, (i - 1.5) / steps)); break; }
-    }
+    // Keep the camera out of buildings and other cars: pulled in in front of whatever's in the way.
+    const pivot = new THREE.Vector3(p.x, p.y + 1.5, p.z);
+    const t = camClear(pivot, target, p);
+    if (t < 1) target.set(lerp(pivot.x, target.x, t), Math.max(target.y * t + pivot.y * (1 - t), pivot.y), lerp(pivot.z, target.z, t));
     const gy = world.ground(target.x, target.z, target.y) + 0.8;
     if (target.y < gy) target.y = gy;
     camPos.lerp(target, Math.min(1, dt * 10));
+    // Easing in from where it was mustn't take it through a wall either.
+    const t2 = camClear(pivot, camPos, p);
+    if (t2 < 1) camPos.lerpVectors(pivot, camPos, t2);
     look = new THREE.Vector3(p.x + cfx * 3, p.y + 1.25 + Math.sin(carLook.pitch) * 4, p.z + cfz * 3);
   }
   camera.position.copy(camPos);
@@ -1504,7 +1505,9 @@ function footCamera(dt) {
   const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
   const fx = -Math.sin(camYaw) * cp, fz = -Math.cos(camYaw) * cp, fy = sp;
   const rx = Math.cos(camYaw), rz = -Math.sin(camYaw);
-  const pivot = new THREE.Vector3(w.x + rx * side, w.y + h, w.z + rz * side);
+  let pivot = new THREE.Vector3(w.x + rx * side, w.y + h, w.z + rz * side);
+  // Shoulder against a wall: look from over the head instead, not from inside the wall.
+  if (!inside && camClear(new THREE.Vector3(w.x, w.y + h, w.z), pivot, null) < 1) pivot = new THREE.Vector3(w.x, w.y + h, w.z);
   let target = new THREE.Vector3(pivot.x - fx * dist, pivot.y - fy * dist + 0.25, pivot.z - fz * dist);
   if (scoped) target = new THREE.Vector3(w.x + fx * 0.3, w.y + 1.62, w.z + fz * 0.3);
   if (inside) {
@@ -1513,31 +1516,64 @@ function footCamera(dt) {
     target.z = clamp(target.z, -R.D + 0.25, -0.15);
     target.y = clamp(target.y, 0.4, R.H - 0.2);
   } else if (!scoped) {
-    for (let i = 1; i <= 8; i++) {
-      const t = i / 8, x = lerp(pivot.x, target.x, t), z = lerp(pivot.z, target.z, t), y = lerp(pivot.y, target.y, t);
-      if (insideBox(x, y, z)) { target.set(lerp(pivot.x, target.x, (i - 1.5) / 8), lerp(pivot.y, target.y, (i - 1.5) / 8), lerp(pivot.z, target.z, (i - 1.5) / 8)); break; }
-    }
+    // Keep the camera out of buildings and cars: pulled in in front of whatever's in the way.
+    const t = camClear(pivot, target, null);
+    if (t < 1) target.lerpVectors(pivot, target, t);
     const gy = world.ground(target.x, target.z, target.y) + 0.3;
     if (target.y < gy) target.y = gy;
   }
   camPos.lerp(target, Math.min(1, dt * (aiming || inside ? 20 : 12)));
+  // Easing in from where it was mustn't take it through a wall either.
+  if (!inside && !scoped) { const t2 = camClear(pivot, camPos, null); if (t2 < 1) camPos.lerpVectors(pivot, camPos, t2); }
   camera.position.copy(camPos);
   addShake(dt);
   camera.lookAt(camPos.x + fx * 10, camPos.y + fy * 10, camPos.z + fz * 10);
   const fov = scoped ? 55 / wp.scope : inside ? 64 : 58 + w.run * 6 - aimCam * 10;
   camera.fov = lerp(camera.fov, fov, Math.min(1, dt * (scoped ? 20 : 4)));
   camera.updateProjectionMatrix();
-  me.holder.visible = !scoped && mode === "foot";
+  // Backed up against a wall, the camera ends up at the head: hide the body rather than look out from inside it.
+  me.holder.visible = !scoped && mode === "foot" && Math.hypot(camPos.x - w.x, camPos.z - w.z, camPos.y - w.y - h) > 0.7;
 }
 
-function insideBox(x, y, z) {
+// How far along from `a` (the player) to `b` (where the camera wants to be) it can go before it would
+// be inside a building or a car, sampled every 20 cm: 1 when the whole way is clear. `skip` is the car
+// the camera is following. It keeps 60 cm off walls so the 0.8 m near plane doesn't slice into
+// them, but only 25 cm within the first metre (less than the player's own 35 cm, so just standing
+// against a wall doesn't count as the view being blocked).
+function camClear(a, b, skip) {
+  const L = a.distanceTo(b);
+  if (L < 1e-3) return 1;
+  const n = Math.ceil(L / 0.2);
+  for (let i = 1; i <= n; i++) {
+    const t = i / n, x = lerp(a.x, b.x, t), y = lerp(a.y, b.y, t), z = lerp(a.z, b.z, t);
+    const m = t * L < 1 ? 0.25 : 0.6;
+    if (insideBox(x, y, z, m) || insideCar(x, y, z, skip, m * 0.75)) return Math.max(0, (i - 1) / n - 0.05 / L);
+  }
+  return 1;
+}
+
+// Inside (or within m of) a car's body.
+function insideCar(x, y, z, skip, m = 0.25) {
+  for (const c of [...traffic.cars, player]) {
+    if (c === skip || c.gone || c.taken || (c === player && mode === "drive")) continue;
+    const dx = x - c.x, dz = z - c.z;
+    if (Math.abs(dx) > c.hl + 1 || Math.abs(dz) > c.hl + 1) continue;
+    const top = (c.y || 0) + ((c.spec && c.spec.roof) || 1.5) + m;
+    if (y > top || y < (c.y || 0) - 0.3) continue;
+    const fx = -Math.sin(c.yaw), fz = -Math.cos(c.yaw);
+    if (Math.abs(dx * fx + dz * fz) < c.hl + m && Math.abs(dx * fz - dz * fx) < c.hw + m) return true;
+  }
+  return false;
+}
+
+function insideBox(x, y, z, m = 0.25) {
   const cx = Math.floor((x + HALF) / CHUNK), cz = Math.floor((z + HALF) / CHUNK);
   if (cx < 0 || cz < 0 || cx >= NCH || cz >= NCH) return false;
   const c = world.chunk(cx, cz);
   const i = clamp(Math.floor((x - c.x0) / 32), 0, 7), j = clamp(Math.floor((z - c.z0) / 32), 0, 7);
   for (const o of c.grid[i + j * 8]) {
     if (o.r != null || o.x0 == null) continue;
-    if (x > o.x0 - 0.5 && x < o.x1 + 0.5 && z > o.z0 - 0.5 && z < o.z1 + 0.5 && y < o.y1 + 0.5) return true;
+    if (x > o.x0 - m && x < o.x1 + m && z > o.z0 - m && z < o.z1 + m && y < o.y1 + m) return true;
   }
   return false;
 }

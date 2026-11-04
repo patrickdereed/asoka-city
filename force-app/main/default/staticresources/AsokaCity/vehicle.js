@@ -34,6 +34,55 @@ export function corners(o) {
   return out;
 }
 
+// Push for an oriented box `a` out of a circle `c` (a lamp post, a tree), or null.
+function circlePush(a, c) {
+  const rx = -a.fz, rz = a.fx;
+  const dx = c.x - a.x, dz = c.z - a.z;
+  const lf = dx * a.fx + dz * a.fz, lr = dx * rx + dz * rz;
+  const ex = lf - clamp(lf, -a.hl, a.hl), ez = lr - clamp(lr, -a.hw, a.hw), dist = Math.hypot(ex, ez);
+  if (dist >= c.r && !(ex === 0 && ez === 0)) return null;
+  if (dist > 1e-4) return { nx: -(ex * a.fx + ez * rx) / dist, nz: -(ex * a.fz + ez * rz) / dist, depth: c.r - dist };
+  const pf = a.hl - Math.abs(lf), pr = a.hw - Math.abs(lr);
+  return pf < pr ? { nx: -a.fx * Math.sign(lf), nz: -a.fz * Math.sign(lf), depth: pf + c.r } : { nx: -rx * Math.sign(lr), nz: -rz * Math.sign(lr), depth: pr + c.r };
+}
+
+// Every car that isn't the player's (traffic shunted out of its lane, wrecks, mission cars) is kept out
+// of buildings, props and bridge walls: pushed back out of whatever it ran into. Returns the summed
+// push normal, or null when it touched nothing, so the caller can kill the speed going into it.
+export function blockCar(w, c) {
+  let n = null;
+  const push = (hit) => {
+    c.x += hit.nx * hit.depth; c.z += hit.nz * hit.depth;
+    n = n || { nx: 0, nz: 0 };
+    n.nx += hit.nx; n.nz += hit.nz;
+  };
+  const R = c.hl + 1, seen = new Set();
+  const cx0 = Math.floor((c.x - R + HALF) / CHUNK), cx1 = Math.floor((c.x + R + HALF) / CHUNK);
+  const cz0 = Math.floor((c.z - R + HALF) / CHUNK), cz1 = Math.floor((c.z + R + HALF) / CHUNK);
+  for (let cz = cz0; cz <= cz1; cz++) for (let cx = cx0; cx <= cx1; cx++) {
+    if (cx < 0 || cz < 0 || cx >= NCH || cz >= NCH) continue;
+    const k = w.chunk(cx, cz);
+    const i0 = clamp(Math.floor((c.x - R - k.x0) / 32), 0, 7), i1 = clamp(Math.floor((c.x + R - k.x0) / 32), 0, 7);
+    const j0 = clamp(Math.floor((c.z - R - k.z0) / 32), 0, 7), j1 = clamp(Math.floor((c.z + R - k.z0) / 32), 0, 7);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) for (const o of k.grid[i + j * 8]) {
+      if (seen.has(o) || o.down) continue;
+      seen.add(o);
+      if (o.y1 != null && c.y > o.y1 - 0.2) continue;
+      const me = obb(c.x, c.z, c.yaw, c.hl, c.hw);
+      const hit = o.r != null ? circlePush(me, o) : sat(me, { x: (o.x0 + o.x1) / 2, z: (o.z0 + o.z1) / 2, fx: 0, fz: -1, hl: (o.z1 - o.z0) / 2, hw: (o.x1 - o.x0) / 2 });
+      if (hit) push(hit);
+    }
+  }
+  for (const wl of w.deckWalls(c.x, c.z)) {
+    if (Math.abs(c.y - wl.y) > 2.5) continue;
+    const dx = wl.x1 - wl.x0, dz = wl.z1 - wl.z0, l = Math.hypot(dx, dz);
+    const hit = sat(obb(c.x, c.z, c.yaw, c.hl, c.hw), { x: (wl.x0 + wl.x1) / 2, z: (wl.z0 + wl.z1) / 2, fx: dx / l, fz: dz / l, hl: l / 2 + 0.05, hw: 0.2 });
+    if (hit) push(hit);
+  }
+  if (n) { const l = Math.hypot(n.nx, n.nz) || 1; n.nx /= l; n.nz /= l; }
+  return n;
+}
+
 export class Vehicle {
   constructor(world, spec, opts = {}) {
     this.w = world;

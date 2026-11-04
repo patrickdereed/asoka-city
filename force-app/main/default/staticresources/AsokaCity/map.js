@@ -597,11 +597,12 @@ export class World {
       for (const k of ["walk", "boxes", "circles", "buildings", "glows", "signs"]) out[k].push(...lm[k]);
     }
     this.genEscapes(out);
-    // Collision grid for the chunk: 8 x 8 buckets of 32 m.
+    // Collision grid for the chunk: 8 x 8 buckets of 32 m. Each solid also goes in any bucket it's
+    // within a metre of, so a single-bucket lookup still sees a wall just over the line.
     out.grid = Array.from({ length: 64 }, () => []);
     const put = (o, ax0, az0, ax1, az1) => {
-      const i0 = clamp(Math.floor((ax0 - x0) / 32), 0, 7), i1 = clamp(Math.floor((ax1 - x0) / 32), 0, 7);
-      const j0 = clamp(Math.floor((az0 - z0) / 32), 0, 7), j1 = clamp(Math.floor((az1 - z0) / 32), 0, 7);
+      const i0 = clamp(Math.floor((ax0 - 1 - x0) / 32), 0, 7), i1 = clamp(Math.floor((ax1 + 1 - x0) / 32), 0, 7);
+      const j0 = clamp(Math.floor((az0 - 1 - z0) / 32), 0, 7), j1 = clamp(Math.floor((az1 + 1 - z0) / 32), 0, 7);
       for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) out.grid[i + j * 8].push(o);
     };
     for (const b of out.boxes) put(b, b.x0, b.z0, b.x1, b.z1);
